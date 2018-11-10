@@ -1,6 +1,7 @@
 (function(global, d3, _) {
-  const DEFAULT_X_ACCESSOR = (d) => d.x;
-  const DEFAULT_Y_ACCESSOR = (d) => d.y;
+  const DEFAULT_X_ACCESSOR = d => d.x;
+  const DEFAULT_Y_ACCESSOR = d => d.y;
+  const DEFAULT_ID_ACCESSOR = d => d;
   const DEFAULT_CURVE = d3.curveLinear;
   const DEFAULT_MARGIN_PROPS = {
     top: 0,
@@ -64,6 +65,7 @@
     let axisProps = Object.assign({}, DEFAULT_AXIS_PROPS);
     let xAccessor = DEFAULT_X_ACCESSOR;
     let yAccessor = DEFAULT_Y_ACCESSOR;
+    let idAccessor = DEFAULT_ID_ACCESSOR;
     let curve = DEFAULT_CURVE;
     const localId = d3.local();
 
@@ -105,15 +107,25 @@
       };
     }
 
+    function getDateIndex(item) {
+
+      return moment().diff(moment(item.date), 'days');
+    }
+
     function getScales(data, props) {
-      const xDomain = seriesExtent(data.series, xAccessor);
-      const yDomain = seriesExtent(data.series, yAccessor);
+      //hardcoded these
+      const xDomain = [0,24];
+      const yDomain = [0, seriesExtent(data.series.map(s => s.curve), yAccessor)[1]];
+      const dayDomain = seriesExtent([data.series.map(
+        s => getDateIndex(s))], idAccessor);      
       const xRange = [0, props.chartWidth];
       const yRange = [props.chartHeight, 0];
+      const dayRange = d3.interpolateInferno;
 
       return {
         x: d3.scaleLinear().domain(xDomain).range(xRange),
         y: d3.scaleLinear().domain(yDomain).range(yRange),
+        day: d3.scaleSequential(dayRange).domain(dayDomain)
       };
     }
 
@@ -284,28 +296,32 @@
      * @param {object} data The data model
      */
     function renderSeries(svg, props, scales, data) {
+
       const {
         x: xScale,
         y: yScale,
+        day : dayScale
       } = scales;
-      const generator = d3.line()
-        .x((d, i) => xScale(xAccessor(d, i)))
-        .y((d, i) => yScale(yAccessor(d, i)))
+
+      line = d3.line()
+        .x((d, i) => xScale(d.x))
+        .y((d, i) => yScale(d.y))
         .curve(curve);
       const container = svg.select('.series-content');
       let series = container
         .selectAll('.series')
         .data(data.series ? data.series : []);
       series.exit().remove();
+
       series = series
         .enter()
         .append('path')
           .attr('class', 'series')
           .attr('fill', 'none')
-          .attr('stroke', 'black')
-          .attr('opacity', 0.25)
+          .attr('stroke', (d,i) => dayScale(getDateIndex(d)))
+          .attr('opacity', 0.5)
         .merge(series)
-          .attr('d', generator);
+          .attr('d', d => line(d.curve));
     }
 
     /**
