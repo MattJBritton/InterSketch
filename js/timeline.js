@@ -1,7 +1,11 @@
 (function(global, d3, _) {
   const DEFAULT_X_ACCESSOR = d => d.x;
   const DEFAULT_Y_ACCESSOR = d => d.y;
-  const DEFAULT_ID_ACCESSOR = d => d;
+  const DEFAULT_X_DOMAIN = [undefined, undefined];
+  const DEFAULT_Y_DOMAIN = [0, undefined];
+  const DEFAULT_SERIES_SCHEME = d3.interpolateInferno;
+  const DEFAULT_SERIES_KEY_ACCESSOR = d => d.key;
+  const DEFAULT_SERIES_DATA_ACCESSOR = d => d.curve;
   const DEFAULT_CURVE = d3.curveLinear;
   const DEFAULT_MARGIN_PROPS = {
     top: 0,
@@ -16,29 +20,126 @@
     left: true,
   };
 
+
+  /**
+   * Return the most common data type in an array.
+   * @param {array<*>} array The data array.
+   * @param {function} valueAccessor A function to return the value for each datum in the array.
+   * @param {number} limit The number of datum to consider.
+   */
+  function type(array, valueAccessor, limit) {
+    let value;
+    let i = -1;
+    let n = limit || array.length;
+    const counts = {};
+    if (valueAccessor) {
+      while (++i < n) {
+        value = valueAccessor(array[i], i, array);
+        type = value === null ? 'null' : typeof value;
+        if (counts[type]) {
+          counts[type] += 1;
+        } else {
+          counts[type] = 1;
+        }
+      }
+    } else {
+      while (++i < n) {
+        value = array[i];
+        type = value === null ? 'null' : typeof value;
+        if (counts[type]) {
+          counts[type] += 1;
+        } else {
+          counts[type] = 1;
+        }
+      }
+    }
+    let maxCount = -Infinity;
+    let maxType = undefined;
+    Object.keys(counts).forEach((k) => {
+      if (counts[k] > maxCount) {
+        maxCount = counts[k];
+        maxType = k;
+      }
+    });
+    return maxType;
+  }
+
+  /**
+   * Return all possible values for data in an array.
+   * @param {array<*>} array The data array.
+   * @param {function} valueAccessor A function to return the value for each datum in the array.
+   */
+  function domain(array, valueAccessor) {
+    let value;
+    let i = -1;
+    let n = array.length;
+    const domain = [];
+    const seen = new Set();
+    if (valueAccessor) {
+      while (++i < n) {
+        value = valueAccessor(array[i], i, array);
+        if (!seen.has(value)) {
+          seen.add(value);
+          domain.push(value);
+        }
+      }
+    } else {
+      while (++i < n) {
+        value = array[i];
+        if (!seen.has(value)) {
+          seen.add(value);
+          domain.push(value);
+        }
+      }
+    }
+    return domain;
+  }
+
   /**
    * Return the extent of multiple data series.
-   * @param {array<array<*>>} series The data series.
-   * @param {function} accessor The value accessor.
+   * @param {array<*>} series The data series.
+   * @param {function} dataAccessor A function to return the data array for each series.
+   * @param {function} valueAccessor A function to return the value for each datum in a series.
    */
-  function seriesExtent(series, accessor) {
+  function seriesExtent(series, dataAccessor, valueAccessor) {
     let gMin;
     let gMax;
     let nMin;
     let nMax;
     let n = series.length;
     let i = -1;
+    const seriesData = series.map(dataAccessor);
     while (++i < n) {
       // Get the initial extent.
-      ([gMin, gMax] = d3.extent(series[i], accessor));
+      ([gMin, gMax] = d3.extent(seriesData[i], valueAccessor));
       while (++i < n) {
         // Compare remaining extents.
-        ([nMin, nMax] = d3.extent(series[i], accessor));
+        ([nMin, nMax] = d3.extent(seriesData[i], valueAccessor));
         if (nMin < gMin) { gMin = nMin; }
         if (nMax > gMax) { gMax = nMax; }
       }
     }
     return [gMin, gMax];
+  }
+
+  /**
+   * Merge the default extent with the extent extracted from the data series.
+   * @param {array<*>} series The data series.
+   * @param {function} dataAccessor A function to return the data array for each series.
+   * @param {function} valueAccessor A function to return the value for each datum in a series.
+   * @param {array<*>} dfault The default extent values.
+   */
+  function mergeExtent(series, dataAccessor, valueAccessor, dfault) {
+    const extent = dfault[0] === undefined || dfault[1] === undefined
+      ? seriesExtent(series, dataAccessor, valueAccessor)
+      : dfault;
+    if (dfault[0] !== undefined) {
+      extent[0] = dfault[0];
+    }
+    if (dfault[1] !== undefined) {
+      extent[1] = dfault[1];
+    }
+    return extent;
   }
 
   /**
@@ -65,20 +166,39 @@
     let axisProps = Object.assign({}, DEFAULT_AXIS_PROPS);
     let xAccessor = DEFAULT_X_ACCESSOR;
     let yAccessor = DEFAULT_Y_ACCESSOR;
-    let idAccessor = DEFAULT_ID_ACCESSOR;
+    let xDomain = DEFAULT_X_DOMAIN;
+    let yDomain = DEFAULT_Y_DOMAIN;
+    let seriesScheme = DEFAULT_SERIES_SCHEME;
+    let seriesKeyAccessor = DEFAULT_SERIES_KEY_ACCESSOR;
+    let seriesDataAccessor = DEFAULT_SERIES_DATA_ACCESSOR;
     let curve = DEFAULT_CURVE;
+    // Local variables are scoped to a DOM element; they are not shared between small multiple instances generated by
+    // the same timeline object.
     const localId = d3.local();
+    const localCurve = d3.local();
+    const localScales = d3.local();
+    const localSketching = d3.local();
+
+    const dispatch = d3.dispatch(
+      'sketchStart',
+      'sketch',
+      'sketchEnd'
+    );
 
     function timeline(svgSelection) {
       svgSelection.each(function(data) {
         // Set the chart ID.
         if (localId.get(this) === undefined) { localId.set(this, _.uniqueId('timeline')); }
+        if (localCurve.get(this) === undefined) { localCurve.set(this, []); }
 
         // Calculate chart properties.
         const svg = d3.select(this);
         const props = getProps(svg);
         const scales = getScales(data, props);
         const axes = getAxes(scales);
+
+        // Persist the scales locally.
+        localScales.set(this, scales);
 
         // Render the chart skeleton.
         renderChart(svg, props);
@@ -88,6 +208,7 @@
         renderSeries(svg, props, scales, data);
         renderSketch(svg, props, scales, data);
         renderEvents(svg, props, scales, data);
+        renderOverlay(svg, props, scales, data);
       });
     }
 
@@ -107,25 +228,23 @@
       };
     }
 
-    function getDateIndex(item) {
-
-      return moment().diff(moment(item.date), 'days');
-    }
-
     function getScales(data, props) {
-      //hardcoded these
-      const xDomain = [0,24];
-      const yDomain = [0, seriesExtent(data.series.map(s => s.curve), yAccessor)[1]];
-      const dayDomain = seriesExtent([data.series.map(
-        s => getDateIndex(s))], idAccessor);      
+      const xExtent = mergeExtent(data.series, seriesDataAccessor, xAccessor, xDomain);
+      const yExtent = mergeExtent(data.series, seriesDataAccessor, yAccessor, yDomain);
+
+      const keys = data.series.map(seriesKeyAccessor);
+      const keyType = type(keys)
+      const keyExtent = keyType === 'number' ? d3.extent(keys) : domain(keys);
+
       const xRange = [0, props.chartWidth];
       const yRange = [props.chartHeight, 0];
-      const dayRange = d3.interpolateInferno;
 
       return {
-        x: d3.scaleLinear().domain(xDomain).range(xRange),
-        y: d3.scaleLinear().domain(yDomain).range(yRange),
-        day: d3.scaleSequential(dayRange).domain(dayDomain)
+        x: d3.scaleLinear().domain(xExtent).range(xRange),
+        y: d3.scaleLinear().domain(yExtent).range(yRange),
+        key: keyType === 'number'
+          ? d3.scaleSequential(seriesScheme).domain(keyExtent)
+          : d3.scaleOrdinal(seriesScheme).domain(keyExtent),
       };
     }
 
@@ -144,6 +263,31 @@
         axes.push({ cls:'left', axis: d3.axisLeft(scales.y) });
       }
       return axes;
+    }
+
+    /**
+     * Return the most recent touches in the chart coordinate system.
+     * @param {object} svg The SVG selection
+     * @param {boolean} invert If true, the touches are inverted to the data domain.
+     */
+    function getChartTouches(svg, invert) {
+      const el = svg.select('.sketch-content').node();
+      return invert
+        ? getInverse(d3.touches(el))
+        : d3.touches(el);
+    }
+    
+    /**
+     * Invert the given points into the data domain.
+     * @param {object} svg The SVG selection
+     * @param {array<array<number>>} points The points to invert
+     */
+    function getInverse(svg, points) {
+      const {
+        x: xScale,
+        y: yScale,
+      } = localScales.get(svg.node());
+      return points.map(p => [xScale.invert(p[0]), yScale.invert(p[1])]);
     }
 
     /**
@@ -167,9 +311,6 @@
 
       // Render the axis container. Do not clip.
       const axisContainer = renderContainer(svg, props, 'axis-content');
-
-      // Render the touch overlay.
-      const overlay = renderOverlay(svg, props);
     }
 
     /**
@@ -229,33 +370,6 @@
         .merge(update)
           .attr('transform', `translate(${props.margin.left}, ${props.margin.top})`);
     }
-
-    /**
-     * Render the overlay for touch events.
-     * @param {object} svg The SVG selection
-     * @param {object} props The chart properties
-     */
-    function renderOverlay(svg, props) {
-      let overlay = svg
-        .selectAll('.touch-overlay')
-        .data([0]);
-      overlay = overlay
-        .enter()
-        .append('g')
-          .attr('class', 'touch-overlay')
-        .merge(overlay);
-      let rect = overlay
-        .selectAll('rect')
-        .data([0]);
-      rect = rect
-        .enter()
-        .append('rect')
-        .merge(rect)
-          .attr('width', props.width)
-          .attr('height', props.height)
-          .attr('opacity', 0.001);
-      return overlay;
-    }
     
     /**
      * Render the chart axes.
@@ -296,16 +410,15 @@
      * @param {object} data The data model
      */
     function renderSeries(svg, props, scales, data) {
-
       const {
         x: xScale,
         y: yScale,
-        day : dayScale
+        key: keyScale,
       } = scales;
 
       line = d3.line()
-        .x((d, i) => xScale(d.x))
-        .y((d, i) => yScale(d.y))
+        .x((d, i) => xScale(xAccessor(d, i)))
+        .y((d, i) => yScale(yAccessor(d, i)))
         .curve(curve);
       const container = svg.select('.series-content');
       let series = container
@@ -318,33 +431,26 @@
         .append('path')
           .attr('class', 'series')
           .attr('fill', 'none')
-          .attr('stroke', (d,i) => dayScale(getDateIndex(d)))
+          .attr('stroke', d => keyScale(seriesKeyAccessor(d)))
           .attr('opacity', 0.5)
         .merge(series)
-          .attr('d', d => line(d.curve));
+          .attr('d', d => line(seriesDataAccessor(d)));
     }
 
     /**
      * Render the sketched timeline.
      * @param {object} svg The SVG selection
-     * @param {object} props The chart properties
-     * @param {object} scales The chart scales
-     * @param {object} data The data model
      */
-    function renderSketch(svg, props, scales, data) {
-      const {
-        x: xScale,
-        y: yScale,
-      } = scales;
-      const generator = d3.line()
-        .x((d, i) => xScale(xAccessor(d, i)))
-        .y((d, i) => yScale(yAccessor(d, i)))
+    function renderSketch(svg) {
+      const curve = localCurve.get(svg.node());
+      const line = d3.line()
+        .x(d => d[0])
+        .y(d => d[1])
         .curve(d3.curveLinear);
-
       const container = svg.select('.sketch-content');
       let sketch = container
-        .selectAll('.sketch')
-        .data(data.sketch ? [data.sketch] : []);
+        .selectAll('.series')
+        .data([curve]);
       sketch.exit().remove();
       sketch = sketch
         .enter()
@@ -352,12 +458,72 @@
           .attr('class', 'series')
           .attr('fill', 'none')
           .attr('stroke', 'black')
+          .attr('stroke-width', 2)
         .merge(sketch)
-          .attr('d', generator);
+          .attr('d', line);
     }
 
     function renderEvents(svg, props, scales, data) {
 
+    }
+
+    /**
+     * Render the overlay for touch events.
+     * @param {object} svg The SVG selection
+     * @param {object} props The chart properties
+     * @param {object} scales The chart scales
+     * @param {object} data The data model
+     */
+    function renderOverlay(svg, props, scales, data) {
+      let overlay = svg
+        .selectAll('.touch-overlay')
+        .data([0]);
+      overlay = overlay
+        .enter()
+        .append('g')
+          .attr('class', 'touch-overlay')
+          .on('touchstart', _.partial(onTouchStart, svg))
+          .on('touchmove', _.partial(onTouchMove, svg))
+          .on('touchend', _.partial(onTouchEnd, svg))
+        .merge(overlay);
+      let rect = overlay
+        .selectAll('rect')
+        .data([0]);
+      rect = rect
+        .enter()
+        .append('rect')
+        .merge(rect)
+          .attr('width', props.width)
+          .attr('height', props.height)
+          .attr('opacity', 0.001);
+      return overlay;
+    }
+
+    function onTouchStart(svg) {
+      // TODO: Determine if sketching starts.
+      const el = svg.node();
+      const curve = []; // TODO: Handle sketching of partial segments.
+      localCurve.set(el, curve);
+      localSketching.set(el, true);
+      dispatch.call('sketchStart', el, getInverse(svg, curve));
+    }
+
+    function onTouchMove(svg) {
+      const el = svg.node();
+      if (localSketching.get(el)) {
+        const curve = localCurve.get(el);
+        const points = getChartTouches(svg);
+        curve.push(points[0]);
+        renderSketch(svg);
+        dispatch.call('sketch', el, getInverse(svg, curve));
+      }
+    }
+
+    function onTouchEnd(svg) {
+      const el = svg.node();
+      const curve = localCurve.get(el);
+      // TODO: Post-processing of curve?
+      dispatch.call('sketchEnd', el, getInverse(svg, curve));
     }
 
     /**
@@ -382,7 +548,7 @@
         return timeline;
       }
       return marginProps;
-    }
+    };
 
     /**
      * If a is specified, set the axes object and return this timeline. Otherwise, return the current margins.
@@ -398,10 +564,11 @@
         return timeline;
       }
       return axisProps;
-    }
+    };
 
     /**
-     * If x is specified, set the x accessor to the given function or path. Otherwise, return the current accessor.
+     * If x is specified, set the x accessor to the given function or path and return this timeline. Otherwise, return
+     * the current accessor.
      * @param {function|string|null|undefined} x The x accessor. If a string, a function is created that will access the
      * value at the given path. If null, the x accessor is set to its default value, which is d => d.x.
      */
@@ -414,7 +581,7 @@
         return timeline;
       }
       return xAccessor;
-    }
+    };
 
     /**
      * If y is specified, set the y accessor to the given function or path and return this timeline. Otherwise, return
@@ -431,7 +598,94 @@
         return timeline;
       }
       return yAccessor;
-    }
+    };
+
+    /**
+     * If x is specified, set the x domain to the given [min, max] extent and return this timeline. Otherwise, return
+     * the current x domain.
+     * @param {array<number|undefined} x The x domain. Values set to undefined will be calculated dynamically. If null,
+     * the x domain is set to its default value, which is [undefined, undefined].
+     */
+    timeline.xDomain = function(x) {
+      if (x === null) {
+        xDomain = DEFAULT_X_DOMAIN;
+        return timeline;
+      } else if (x !== undefined) {
+        xDomain = x;
+        return timeline;
+      }
+      return xDomain.slice();
+    };
+
+    /**
+     * If y is specified, set the y domain to the given [min, max] extent and return this timeline. Otherwise, return
+     * the current y domain.
+     * @param {array<number|undefined} y The y domain. Values set to undefined will be calculated dynamically. If null,
+     * the y domain is set to its default value, which is [0, undefined].
+     */
+    timeline.yDomain = function(y) {
+      if (y === null) {
+        yDomain = DEFAULT_Y_DOMAIN;
+        return timeline;
+      } else if (y !== undefined) {
+        yDomain = y;
+        return timeline;
+      }
+      return yDomain.slice();
+    };
+
+    /**
+     * If s is specified, set the series color scheme to the given function and return this timeline. Otherwise, return
+     * the current scheme.
+     * @param {function} s The color scheme. See d3-scale-chromatic. If null, the color scheme is set to its default
+     * value, which is d3-interpolateInferno.
+     */
+    timeline.seriesScheme = function(s) {
+      if (s === null) {
+        seriesScheme = DEFAULT_SERIES_SCHEME;
+        return timeline;
+      } else if (s !== undefined) {
+        seriesScheme = s;
+        return timeline;
+      }
+      return seriesScheme; 
+    };
+
+    /**
+     * If k is sepcified, set the series key accessor to the given function or path and return this timeline. Otherwise,
+     * return the current accessor.
+     * @param {function|string|null|undefined} k The series key accessor. If a string, a function is created that will
+     * access the value at the given path. If null, the series key accessor is set to its default value, which is
+     * d => d.key.
+     */
+    timeline.seriesKey = function(k) {
+      if (k === null) {
+        seriesKeyAccessor = DEFAULT_SERIES_KEY_ACCESSOR;
+        return timeline;
+      } else if (k !== undefined) {
+        seriesKeyAccessor = _.iteratee(k);
+        return timeline;
+      }
+      return seriesKeyAccessor;
+    };
+
+    /**
+     * If d is sepcified, set the series data accessor to the given function or path and return this timeline.
+     * Otherwise, return the current accessor.
+     * @param {function|string|null|undefined} d The series data accessor. If a string, a function is created that will
+     * access the value at the given path. If null, the series data accessor is set to its default value, which is
+     * d => d.durve.
+     */
+    timeline.seriesData = function(d) {
+      if (d === null) {
+        seriesDataAccessor = DEFAULT_SERIES_DATA_ACCESSOR;
+        return timeline;
+      } else if (d !== undefined) {
+        seriesDataAccessor = _.iteratee(d);
+        return timeline;
+      }
+      return seriesDataAccessor;
+    };
 
     /**
      * If c is specified, set the curve factory and return this timeline. Otherwise, return the current curve factory.
@@ -447,7 +701,15 @@
         return timeline;
       }
       return curve;
-    }
+    };
+
+    /**
+     * Add, remove, or get the callback for the specified event types. See d3-dispatch.on.
+     */
+    timeline.on = function() {
+      const value = dispatch.on.apply(dispatch, arguments);
+      return value === dispatch ? timeline : value;
+    };
 
     return timeline;
   }
