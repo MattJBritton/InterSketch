@@ -1,4 +1,4 @@
-(function(global, timeline, d3, _) {
+(function(global, timeline, d3, moment, _) {
 
   let formatTime = d3.timeFormat("%B %d, %Y");
   let startDate = new Date(2017,5,1);
@@ -32,7 +32,6 @@
     missingY = everpolate.linear(missingX, validX, validY);
 
     return series.map((d,i) => ({
-
           x : d.x,
           y : null_indices.includes(i)?missingY[null_indices.indexOf(i)]:d.y
     }))
@@ -77,13 +76,27 @@
 
     console.log(series);
 
-    // Example: create the main timeline component.
+    // Create the main timeline component.
+    const now = moment();
     const mainTimeline = timeline()
-      .x(d => d.x)
-      .y(d => d.y)
       .margin({ top: 10, right: 10, left: 30, bottom: 30 })
       .axis({ bottom: true, left: true })
-      .curve(d3.curveMonotoneX);
+      .curve(d3.curveMonotoneX)
+      .x(d => d.x)
+      .y(d => d.y)
+      .xDomain([0, 24])
+      .yDomain([0, undefined])
+      .seriesKey(s => now.diff(moment(s.date), 'days'))
+      .seriesData(s => s.curve)
+      .on('sketchStart', (curve) => {
+        console.log('sketchStart:', curve);
+      })
+      .on('sketch', (curve) => {
+        console.log('sketch:', curve);
+      })
+      .on('sketchEnd', (curve) => {
+        console.log('sketchEnd', curve);
+      });
 
     // Example: render the main timeline component.
     d3.select('#timeline')
@@ -94,4 +107,4 @@
       .call(mainTimeline);
   });
 
-})(window, window.timeline, window.d3, window._);
+})(window, window.timeline, window.d3, window.moment, window._);
