@@ -97,10 +97,22 @@ textarea {
    Author's custom styles
    ========================================================================== */
 
+#timeline {
+    touch-action: none;
+}
 
+.color-dot {
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    margin-right: 1rem;
+    border-radius: 1rem;
+}
 
-
-
+.dropdown-menu .far,
+.dropdown-menu .fas {
+    margin-right: 1rem;
+}
 
 
 
