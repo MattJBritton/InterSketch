@@ -89,13 +89,10 @@
       .seriesKey(s => now.diff(moment(s.date), 'days'))
       .seriesData(s => s.curve)
       .on('sketchStart', (curve) => {
-        console.log('sketchStart:', curve);
       })
       .on('sketch', (curve) => {
-        console.log('sketch:', curve);
       })
       .on('sketchEnd', (curve) => {
-        console.log('sketchEnd', curve);
       });
 
     // Example: render the main timeline component.
