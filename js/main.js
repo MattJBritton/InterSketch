@@ -202,6 +202,9 @@
       .on('sketchEnd', function(curve){
         console.log('sketchEnd', curve);
         calculateDTW(svg, mainTimeline, curve, series);
+      })
+      .on('sketchSave', function(curve, points) {
+        console.log('sketchSave:', curve, points);
       });
 
     // Example: render the main timeline component.

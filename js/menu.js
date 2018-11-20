@@ -98,7 +98,7 @@
      */
     contextMenu.on = function() {
       const value = dispatch.on.apply(dispatch, arguments);
-      return value === dispatch ? timeline : value;
+      return value === dispatch ? contextMenu : value;
     };
 
 

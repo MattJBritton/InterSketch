@@ -1,3 +1,5 @@
+// TODO: Add implicit start and end control points
+// TODO: Click elsewhere to close menu
 (function(global, d3, _) {
   const DEFAULT_X_ACCESSOR = d => d.x;
   const DEFAULT_Y_ACCESSOR = d => d.y;
@@ -31,6 +33,21 @@
   const CURVE_DISTANCE = 10;
   const POINT_DISTANCE = 10;
 
+
+  /**
+   * Return the offset of an element relative to the page.
+   * @param {Element} el The DOM element.
+   */
+  function getOffset(el) {
+    const bounds = el.getBoundingClientRect();
+    const document = window.document.documentElement;
+    return {
+      top: bounds.top + window.pageYOffset - document.clientTop,
+      left: bounds.left + window.pageXOffset - document.clientLeft,
+      width: bounds.width,
+      height: bounds.height,
+    };
+  }
 
   /**
    * Calculate the centroid of a list of touches.
@@ -426,12 +443,15 @@
     const localScales = d3.local();
     const localCurve = d3.local();
     const localPoints = d3.local();
-    const localIsSketching = d3.local();
+    const localSketching = d3.local();
+    const localChanged = d3.local();
 
     const dispatch = d3.dispatch(
       'sketchStart',
       'sketch',
-      'sketchEnd'
+      'sketchEnd',
+      'sketchSave',
+      'pointsChange',
     );
 
     function timeline(svgSelection) {
@@ -738,8 +758,10 @@
      * @param {object} svg The SVG selection
      */
     function renderOverlay(svg) {
-      const curve = localCurve.get(svg.node());
-      const props = localProps.get(svg.node());
+      const svgEl = svg.node();
+      const curve = localCurve.get(svgEl);
+      const props = localProps.get(svgEl);
+      const changed = localChanged.get(svgEl);
       let overlay = svg
         .selectAll('.touch-overlay')
         .data([0]);
@@ -778,6 +800,23 @@
           .attr('y2', props.chartHeight + props.margin.top)
           .attr('stroke', 'white')
           .attr('stroke-width', 2);
+
+      // Render the save button.
+      let saveBtn = d3.select('body')
+        .selectAll('.btn.btn-save')
+        .data(changed ? [getOffset(svgEl)] : []);
+      saveBtn.exit().remove();
+      saveBtn = saveBtn
+        .enter()
+        .append('button')
+          .attr('class', 'btn btn-primary btn-save')
+          .on('touchend', _.partial(onSaveClick, svg))
+        .merge(saveBtn)
+          .style('position', 'absolute')
+          .style('top', d => `calc(${d.top + d.height}px - 5rem)`)
+          .style('left', d => `calc(${d.left + d.width}px - 5rem)`)
+          .text('Save');
+
       return overlay;
     }
 
@@ -787,14 +826,9 @@
         .selectAll('.point')
         .filter(d => d.menu)
         .call(menu);
-
       menu
-        .on('change', (point, type) => {
-          point.type = type;
-          point.menu = false;
-          renderPoints(svg);
-          setTimeout(() => { renderMenus(svg); }, 350);
-        });
+        .on('change', _.partial(onMenuChange, svg))
+        .on('remove', _.partial(onMenuRemove, svg));
     }
 
     function initOverlayTouch(svg) {
@@ -1045,7 +1079,8 @@
       const curve = points // TODO: Handle sketching of partial segments.
       localCurve.set(svgEl, curve);
       localPoints.set(svgEl, []);
-      localIsSketching.set(svgEl, true);
+      localSketching.set(svgEl, true);
+      localChanged.set(svgEl, true);
       renderSketch(svg);
       renderOverlay(svg);
       renderPoints(svg);
@@ -1056,7 +1091,7 @@
       // console.debug('SKETCH:', touches);
       const svgEl = svg.node();
       const containerEl = svg.select('.sketch-content').node();
-      if (localIsSketching.get(svgEl)) {
+      if (localSketching.get(svgEl)) {
         const point = touchPoint(containerEl, touches);
         const curve = localCurve.get(svgEl);
         curve.push(point);
@@ -1075,7 +1110,7 @@
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
       const points = localPoints.get(svgEl);
-      localIsSketching.set(svgEl, false);
+      localSketching.set(svgEl, false);
       // TODO: Post-processing of curve?
       renderOverlay(svg);
       dispatch.call('sketchEnd', svgEl, getInverse(svg, curve));
@@ -1085,13 +1120,15 @@
       // console.debug('CURVE PRESS:', point);
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
-  
       // Insert a new point in the selected state.
       const idx = _.sortedIndexBy(points, point, d => d[0]);
       points.splice(idx, 0, point);
       point.type = DEFAULT_TYPE;
       point.selected = true;
+      localChanged.set(svgEl, true);
       renderPoints(svg);
+      renderOverlay(svg);
+      dispatch.call('pointsChange', svgEl, getInverse(svg, points));
     }
 
     function onCurveRelease(svg, point) {
@@ -1110,6 +1147,7 @@
       // Move the point by finding the closest point on the curve.
       const sketchEl = svg.select('.series.visible').node();
       const closest = closestPathPoint(sketchEl, touchPoint);
+      const points = localPoints.get(svgEl);
       point[0] = closest[0];
       point[1] = closest[1];
       renderPoints(svg);
@@ -1124,7 +1162,10 @@
       const idx = _.sortedIndexBy(points, point, d => d[0]);
       points.splice(idx, 0, point);
       point.selected = false;
+      localChanged.set(svgEl, true);
       renderPoints(svg);
+      renderOverlay(svg);
+      dispatch.call('pointsChange', svgEl, getInverse(svg, points));
     }
 
     function onPointDoubletap(svg, point) {
@@ -1133,26 +1174,54 @@
       renderMenus(svg);
     }
 
-    function onRemovePoint(svg, point) {
-      // console.debug('REMOVE POINT:', point);
-      const svgEl = svg.node();
-      const points = localPoints.get(svgEl);
-      _.pull(points, point);
-      renderPoints(svg);
-    }
-
     function onOverlayPress(svg, point) {
       // console.debug('OVERLAY PRESS:', point);
       // Clear existing control points.
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
       localPoints.set(svgEl, points.filter(d => !!d.type));
+      localChanged.set(svgEl, true);
       renderPoints(svg);
       renderMenus(svg);
+      renderOverlay(svg);
+      dispatch.call('pointsChange', svgEl, getInverse(svg, points));
     }
 
     function onOverlayRelease(svg, point) {
       // console.debug('OVERLAY RELEASE:', point);
+    }
+
+    function onMenuChange(svg, point, option) {
+      const svgEl = svg.node();
+      const points = localPoints.get(svgEl);
+      point.type = option;
+      point.menu = false;
+      localChanged.set(svgEl, true);
+      renderPoints(svg);
+      renderOverlay(svg);
+      // Adding a slight delay gives feedback that the menu option was pressed.
+      setTimeout(() => { renderMenus(svg); }, 250);
+      dispatch.call('pointsChange', svgEl, getInverse(svg, points));
+    }
+
+    function onMenuRemove(svg, point) {
+      const svgEl = svg.node();
+      const points = localPoints.get(svgEl);
+      _.pull(points, point);
+      localChanged.set(svgEl, true);
+      renderPoints(svg);
+      renderOverlay(svg);
+      setTimeout(() => { renderMenus(svg); }, 250);
+      dispatch.call('pointsChange', svgEl, getInverse(svg, points));
+    }
+
+    function onSaveClick(svg) {
+      const svgEl = svg.node();
+      const curve = localCurve.get(svgEl);
+      const points = localPoints.get(svgEl);
+      localChanged.set(svgEl, false);
+      renderOverlay(svg);
+      dispatch.call('sketchSave', svgEl, getInverse(svg, curve), getInverse(svg, points));
     }
 
     /**
