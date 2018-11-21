@@ -1147,7 +1147,6 @@
       // Move the point by finding the closest point on the curve.
       const sketchEl = svg.select('.series.visible').node();
       const closest = closestPathPoint(sketchEl, touchPoint);
-      const points = localPoints.get(svgEl);
       point[0] = closest[0];
       point[1] = closest[1];
       renderPoints(svg);
