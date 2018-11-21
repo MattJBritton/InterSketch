@@ -88,9 +88,11 @@
    * @param {boolean} invert If true, the touches are inverted to the data domain.
    */
   function touchPoint(el, touches, invert) {
-    return invert
+    const point = invert
       ? getInverse(d3.clientPoint(el, centroid(touches)))
       : d3.clientPoint(el, centroid(touches));
+    point.touches = touches;
+    return point;
   }
 
   /**
@@ -747,7 +749,7 @@
         .merge(point)
           .attr('cx', d => d[0])
           .attr('cy', d => d[1])
-          .attr('r', d => d.selected ? 20 : 6)
+          .attr('r', d => d.selected ? 30 : 6)
           .attr('stroke', d => d.type.stroke)
           .attr('stroke-width', 2)
           .attr('fill', d => d.type.fill);
@@ -785,37 +787,38 @@
           .attr('height', props.height)
           .attr('opacity', 0.001);
 
-      let boundary = overlay
-        .selectAll('.bound')
-        .data(curve.length ? [curve[0], curve[curve.length - 1]] : []);
-      boundary.exit().remove();
-      boundary = boundary
-        .enter()
-        .append('line')
-          .attr('class', 'bound')
-        .merge(boundary)
-          .attr('x1', d => d[0] + props.margin.left)
-          .attr('x2', d => d[0] + props.margin.left)
-          .attr('y1', props.margin.top)
-          .attr('y2', props.chartHeight + props.margin.top)
-          .attr('stroke', 'white')
-          .attr('stroke-width', 2);
+      // TODO: Move this to another function.
+      // let boundary = overlay
+      //   .selectAll('.bound')
+      //   .data(curve.length ? [curve[0], curve[curve.length - 1]] : []);
+      // boundary.exit().remove();
+      // boundary = boundary
+      //   .enter()
+      //   .append('line')
+      //     .attr('class', 'bound')
+      //   .merge(boundary)
+      //     .attr('x1', d => d[0] + props.margin.left)
+      //     .attr('x2', d => d[0] + props.margin.left)
+      //     .attr('y1', props.margin.top)
+      //     .attr('y2', props.chartHeight + props.margin.top)
+      //     .attr('stroke', 'white')
+      //     .attr('stroke-width', 2);
 
-      // Render the save button.
-      let saveBtn = d3.select('body')
-        .selectAll('.btn.btn-save')
-        .data(changed ? [getOffset(svgEl)] : []);
-      saveBtn.exit().remove();
-      saveBtn = saveBtn
-        .enter()
-        .append('button')
-          .attr('class', 'btn btn-primary btn-save')
-          .on('touchend', _.partial(onSaveClick, svg))
-        .merge(saveBtn)
-          .style('position', 'absolute')
-          .style('top', d => `calc(${d.top + d.height}px - 5rem)`)
-          .style('left', d => `calc(${d.left + d.width}px - 5rem)`)
-          .text('Save');
+      // // Render the save button.
+      // let saveBtn = d3.select('body')
+      //   .selectAll('.btn.btn-save')
+      //   .data(changed ? [getOffset(svgEl)] : []);
+      // saveBtn.exit().remove();
+      // saveBtn = saveBtn
+      //   .enter()
+      //   .append('button')
+      //     .attr('class', 'btn btn-primary btn-save')
+      //     .on('touchend', _.partial(onSaveClick, svg))
+      //   .merge(saveBtn)
+      //     .style('position', 'absolute')
+      //     .style('top', d => `calc(${d.top + d.height}px - 5rem)`)
+      //     .style('left', d => `calc(${d.left + d.width}px - 5rem)`)
+      //     .text('Save');
 
       return overlay;
     }
@@ -835,7 +838,7 @@
       const svgEl = svg.node();
       const containerEl = svg.select('.sketch-content').node();
       const { empty, fromEvent, merge, timer } = rxjs;
-      const { bufferCount, catchError, concatMap, elementAt, filter, first, map, partition, takeUntil, tap } = rxjs.operators;
+      const { bufferCount, catchError, concatMap, elementAt, filter, first, map, mergeMap, partition, publish, share, takeUntil, tap } = rxjs.operators;
 
       // In order to get the best precision, the overlay handles all touch events.
       // Single finger events:
@@ -843,11 +846,12 @@
       //    - onPointDoubletap
       // 2. Presses
       //    - onCurvePress
+      //    - onCurveMove
       //    - onCurveRelease
       //    - onPointPress
       //    - onPointRelease
-      //    - onOverlayPress
-      //    - onOverlayRelease
+      //    - onOtherPress
+      //    - onOtherRelease
       // 3. Moves
       //    - onSketchStart
       //    - onSketch
@@ -888,8 +892,10 @@
         filter(closest => closest && closest.distance <= POINT_DISTANCE)
       ).subscribe(_.partial(onPointDoubletap, svg));
 
-      // All single finger presses.
-      const press$ = singlestart$.pipe(
+      // Presses.
+      const press$ = fromEvent(this, 'touchstart').pipe(
+        tap(preventDefault),
+        map(evt => toTouchArray(evt.changedTouches)),
         concatMap(touches => {
           const touchIds = touches.map(t => t.identifier);
           const touchmove$ = fromEvent(this, 'touchmove')
@@ -901,68 +907,60 @@
           return timer(PRESS_INTERVAL).pipe(
             takeUntil(touchmove$.pipe(elementAt(3))),
             takeUntil(touchend$),
-            map(() => touches),
+            map(() => touchPoint(containerEl, touches)),
             catchError(err => empty())
           );
-        })
+        }),
+        share(),
       );
 
-      // onPointPress, onCurvePress, onOverlayPress
-      const [objectPress$, overlayPress$] = press$.pipe(
-        map(touches => {
+      // Search for the closest object pressed and split by object type.
+      const picked$ = press$.pipe(
+        map(point => {
           let closest;
-          const point = touchPoint(containerEl, touches);
           const points = localPoints.get(svgEl);
-          const sketchEl = svg.select('.series.visible').node();
           closest = closestPoint(points, point);
           if (closest && closest.distance <= POINT_DISTANCE) {
             closest._type = 'point';
-            closest._touches = touches;
+            closest.touches = point.touches;
             return closest;
           }
+          const sketchEl = svg.select('.series.visible').node();
           closest = closestPathPoint(sketchEl, point);
           if (closest && closest.distance <= CURVE_DISTANCE) {
             closest._type = 'curve';
-            closest._touches = touches;
+            closest.touches = point.touches;
             return closest;
           }
-          point._touches = touches;
+          point._type = 'other';
           return point;
         }),
-        partition(closest => !!closest._type),
+        share()
       );
-      const [pointPress$, curvePress$] = objectPress$.pipe(
-        partition(closest => closest._type === 'point')
+      pointPress$ = picked$.pipe(
+        filter(p => p._type === 'point'),
+        tap(p => delete p._type),
+        share()
       );
+      curvePress$ = picked$.pipe(
+        filter(p => p._type === 'curve'),
+        tap(p => delete p._type),
+        share()
+      );
+      otherPress$ = picked$.pipe(
+        filter(p => p._type === 'other'),
+        tap(p => delete p._type),
+        share()
+      );
+
       pointPress$.subscribe(_.partial(onPointPress, svg));
       curvePress$.subscribe(closest => onCurvePress(svg, closest, false));
-      overlayPress$.subscribe(_.partial(onOverlayPress, svg));
-
-      // onPointRelease
-      pointPress$.pipe(
-        concatMap(point => {
-          const touches = point._touches;
-          const touchIds = touches.map(t => t.identifier);
-          return merge(
-            fromEvent(this, 'touchend'),
-            fromEvent(this, 'touchcancel')
-          ).pipe(
-            filterTouches(touchIds),
-            first(),
-            map(() => point),
-            tap(point => {
-              delete point._type;
-              delete point._touches;
-            })
-          );
-        })
-      ).subscribe(_.partial(onPointRelease, svg));
+      otherPress$.subscribe(_.partial(onOtherPress, svg));
 
       // onPointMove
       pointPress$.pipe(
-        concatMap(point => {
-          const touches = point._touches;
-          const touchIds = touches.map(t => t.identifier);
+        mergeMap(point => {
+          const touchIds = point.touches.map(t => t.identifier);
           const touchmove$ = fromEvent(this, 'touchmove')
             .pipe(filterTouches(touchIds));
           const touchend$ = merge(
@@ -976,48 +974,73 @@
         })
       ).subscribe(([oldPoint, newPoint]) => onPointMove(svg, oldPoint, newPoint));
 
-      // onCurveRelease
-      curvePress$.pipe(
-        concatMap(point => {
-          const touches = point._touches;
-          const touchIds = touches.map(t => t.identifier);
+      // onPointRelease
+      pointPress$.pipe(
+        mergeMap(point => {
+          const touchIds = point.touches.map(t => t.identifier);
           return merge(
             fromEvent(this, 'touchend'),
             fromEvent(this, 'touchcancel')
           ).pipe(
             filterTouches(touchIds),
             first(),
-            map(() => point),
-            tap(point => {
-              delete point._type;
-              delete point._touches;
-            })
+            map(() => point)
+          );
+        })
+      ).subscribe(_.partial(onPointRelease, svg));
+
+      // onCurveMove
+      curvePress$.pipe(
+        mergeMap(point => {
+          const touchIds = point.touches.map(t => t.identifier);
+          const touchmove$ = fromEvent(this, 'touchmove')
+            .pipe(filterTouches(touchIds));
+          const touchend$ = merge(
+            fromEvent(this, 'touchend'),
+            fromEvent(this, 'touchcancel')
+          ).pipe(filterTouches(touchIds));
+          return touchmove$.pipe(
+            takeUntil(touchend$),
+            map(touches => [point, touchPoint(containerEl, touches)]),
+          );
+        })
+      ).subscribe(([oldPoint, newPoint]) => onCurveMove(svg, oldPoint, newPoint));
+
+      // onCurveRelease
+      curvePress$.pipe(
+        mergeMap(point => {
+          const touchIds = point.touches.map(t => t.identifier);
+          return merge(
+            fromEvent(this, 'touchend'),
+            fromEvent(this, 'touchcancel')
+          ).pipe(
+            filterTouches(touchIds),
+            first(),
+            map(() => point)
           );
         })
       ).subscribe(_.partial(onCurveRelease, svg));
 
-      // onOverlayRelease
-      overlayPress$.pipe(
-        concatMap(point => {
-          const touches = point._touches;
-          const touchIds = touches.map(t => t.identifier);
+      // onOtherRelease
+      otherPress$.pipe(
+        mergeMap(point => {
+          const touchIds = point.touches.map(t => t.identifier);
           return merge(
             fromEvent(this, 'touchend'),
             fromEvent(this, 'touchcancel')
           ).pipe(
             filterTouches(touchIds),
             first(),
-            map(() => point),
-            tap(point => {
-              delete point._type;
-              delete point._touches;
-            })
+            map(() => point)
           );
         })
-      ).subscribe(_.partial(onOverlayRelease, svg));
+      ).subscribe(_.partial(onOtherRelease, svg));
 
-      // All single finger sketch start events.
-      const sketch$ = singlestart$.pipe(
+      // Sketch start events.
+      const sketch$ = fromEvent(this, 'touchstart').pipe(
+        filter(() => !localSketching.get(svgEl)),
+        tap(preventDefault),
+        map(evt => toTouchArray(evt.changedTouches)),
         concatMap(touches => {
           const touchIds = touches.map(t => t.identifier);
           const touchmove$ = fromEvent(this, 'touchmove')
@@ -1033,7 +1056,8 @@
             first(),
             catchError(err => empty())
           );
-        })
+        }),
+        share()
       );
 
       // onSketchStart and onSketch events.
@@ -1053,8 +1077,8 @@
 
       // onSketchEnd events.
       sketch$.pipe(
-        concatMap(touches => {
-          const touchIds = touches.map(t => t.identifier);
+        concatMap(head => {
+          const touchIds = head[0].map(t => t.identifier);
           return merge(
             fromEvent(this, 'touchend'),
             fromEvent(this, 'touchcancel')
@@ -1066,9 +1090,34 @@
       ).subscribe(_.partial(onSketchEnd, svg));
 
       // Two finger events:
-      // 1. Press and {press, sketch, move}
-      // 2. Pinch and 
-      // 3. Pinch and stretch
+      // 1. Press and {sketch, move}
+      // 2. Pinch and zoom
+      // const doublestart$ = touchStream(this, 'touchstart', 2);
+      // const pressstart$ = doublestart$.pipe(
+      //   filter(() => localPoints.get(svgEl).some(d => d.selected))
+      // ).subscribe(() => console.log('PRESS +'));
+
+      // const pressmove
+
+      // const sketch$ = pressstart$.pipe(
+      //   concatMap(touches => {
+      //     const touchIds = touches.map(t => t.identifier);
+      //     const touchmove$ = fromEvent(this, 'touchmove')
+      //       .pipe(filterTouches(touchIds));
+      //     const touchend$ = merge(
+      //       fromEvent(this, 'touchend'),
+      //       fromEvent(this, 'touchcancel')
+      //     ).pipe(filterTouches(touchIds));
+      //     return touchmove$.pipe(
+      //       takeUntil(touchend$),
+      //       takeUntil(timer(PRESS_INTERVAL)),
+      //       bufferCount(3),
+      //       first(),
+      //       catchError(err => empty())
+      //     );
+      //   })
+      // );
+
     }
 
     function onSketchStart(svg, head) {
@@ -1082,7 +1131,7 @@
       localSketching.set(svgEl, true);
       localChanged.set(svgEl, true);
       renderSketch(svg);
-      renderOverlay(svg);
+      // renderOverlay(svg);
       renderPoints(svg);
       dispatch.call('sketchStart', svgEl, getInverse(svg, curve));
     }
@@ -1096,7 +1145,7 @@
         const curve = localCurve.get(svgEl);
         curve.push(point);
         renderSketch(svg);
-        renderOverlay(svg);
+        // renderOverlay(svg);
         dispatch.call('sketch', svgEl, getInverse(svg, curve));
       }
     }
@@ -1109,10 +1158,9 @@
       // console.debug('SKETCH END:', touches);
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
-      const points = localPoints.get(svgEl);
       localSketching.set(svgEl, false);
       // TODO: Post-processing of curve?
-      renderOverlay(svg);
+      // renderOverlay(svg);
       dispatch.call('sketchEnd', svgEl, getInverse(svg, curve));
     }
 
@@ -1127,12 +1175,17 @@
       point.selected = true;
       localChanged.set(svgEl, true);
       renderPoints(svg);
-      renderOverlay(svg);
-      dispatch.call('pointsChange', svgEl, getInverse(svg, points));
+      // renderOverlay(svg);
+    }
+
+    function onCurveMove(svg, point, touchPoint) {
+      // console.debug('CURVE MOVE:', point);
+      onPointMove(svg, point, touchPoint);
     }
 
     function onCurveRelease(svg, point) {
       // console.debug('CURVE RELEASE:', point);
+      onPointRelease(svg, point);
     }
 
     function onPointPress(svg, point) {
@@ -1144,12 +1197,22 @@
 
     function onPointMove(svg, point, touchPoint) {
       // console.debug('POINT MOVE:', point, touchPoint);
-      // Move the point by finding the closest point on the curve.
+      const svgEl = svg.node();
       const sketchEl = svg.select('.series.visible').node();
-      const closest = closestPathPoint(sketchEl, touchPoint);
-      point[0] = closest[0];
-      point[1] = closest[1];
-      renderPoints(svg);
+      const points = localPoints.get(svgEl);
+      const selectedCount = points.filter(d => d.selected).length;
+
+      if (selectedCount > 1) {
+        console.log('STRETCH/TRUNCATE');
+
+
+      } else {
+        // Move the point by finding the closest point on the curve.
+        const closest = closestPathPoint(sketchEl, touchPoint);
+        point[0] = closest[0];
+        point[1] = closest[1];
+        renderPoints(svg);
+      }
     }
 
     function onPointRelease(svg, point) {
@@ -1163,31 +1226,30 @@
       point.selected = false;
       localChanged.set(svgEl, true);
       renderPoints(svg);
-      renderOverlay(svg);
+      // renderOverlay(svg);
       dispatch.call('pointsChange', svgEl, getInverse(svg, points));
     }
 
     function onPointDoubletap(svg, point) {
-      // console.debug('POINT DOUBLE TAP:', point);
       point.menu = true;
       renderMenus(svg);
     }
 
-    function onOverlayPress(svg, point) {
-      // console.debug('OVERLAY PRESS:', point);
+    function onOtherPress(svg, point) {
+      // console.debug('OTHER PRESS:', point);
       // Clear existing control points.
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
-      localPoints.set(svgEl, points.filter(d => !!d.type));
+      localPoints.set(svgEl, points.filter(d => !!d.type.value));
       localChanged.set(svgEl, true);
       renderPoints(svg);
       renderMenus(svg);
-      renderOverlay(svg);
+      // renderOverlay(svg);
       dispatch.call('pointsChange', svgEl, getInverse(svg, points));
     }
 
-    function onOverlayRelease(svg, point) {
-      // console.debug('OVERLAY RELEASE:', point);
+    function onOtherRelease(svg, point) {
+      // console.debug('OTHER RELEASE:', point);
     }
 
     function onMenuChange(svg, point, option) {
@@ -1197,7 +1259,7 @@
       point.menu = false;
       localChanged.set(svgEl, true);
       renderPoints(svg);
-      renderOverlay(svg);
+      // renderOverlay(svg);
       // Adding a slight delay gives feedback that the menu option was pressed.
       setTimeout(() => { renderMenus(svg); }, 250);
       dispatch.call('pointsChange', svgEl, getInverse(svg, points));
@@ -1209,7 +1271,7 @@
       _.pull(points, point);
       localChanged.set(svgEl, true);
       renderPoints(svg);
-      renderOverlay(svg);
+      // renderOverlay(svg);
       setTimeout(() => { renderMenus(svg); }, 250);
       dispatch.call('pointsChange', svgEl, getInverse(svg, points));
     }
@@ -1219,7 +1281,7 @@
       const curve = localCurve.get(svgEl);
       const points = localPoints.get(svgEl);
       localChanged.set(svgEl, false);
-      renderOverlay(svg);
+      // renderOverlay(svg);
       dispatch.call('sketchSave', svgEl, getInverse(svg, curve), getInverse(svg, points));
     }
 
