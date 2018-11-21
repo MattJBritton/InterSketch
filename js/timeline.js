@@ -29,9 +29,9 @@
     value: undefined,
   };
   const DOUBLE_TAP_INTERVAL = 350;
-  const PRESS_INTERVAL = 500;
-  const CURVE_DISTANCE = 10;
-  const POINT_DISTANCE = 10;
+  const PRESS_INTERVAL = 300;
+  const CURVE_DISTANCE = 20;
+  const POINT_DISTANCE = 20;
 
 
   /**
@@ -787,38 +787,38 @@
           .attr('height', props.height)
           .attr('opacity', 0.001);
 
-      // TODO: Move this to another function.
-      // let boundary = overlay
-      //   .selectAll('.bound')
-      //   .data(curve.length ? [curve[0], curve[curve.length - 1]] : []);
-      // boundary.exit().remove();
-      // boundary = boundary
-      //   .enter()
-      //   .append('line')
-      //     .attr('class', 'bound')
-      //   .merge(boundary)
-      //     .attr('x1', d => d[0] + props.margin.left)
-      //     .attr('x2', d => d[0] + props.margin.left)
-      //     .attr('y1', props.margin.top)
-      //     .attr('y2', props.chartHeight + props.margin.top)
-      //     .attr('stroke', 'white')
-      //     .attr('stroke-width', 2);
+      // TODO: Move this to another function?
+      let boundary = overlay
+        .selectAll('.bound')
+        .data(curve.length ? [curve[0], curve[curve.length - 1]] : []);
+      boundary.exit().remove();
+      boundary = boundary
+        .enter()
+        .append('line')
+          .attr('class', 'bound')
+        .merge(boundary)
+          .attr('x1', d => d[0] + props.margin.left)
+          .attr('x2', d => d[0] + props.margin.left)
+          .attr('y1', props.margin.top)
+          .attr('y2', props.chartHeight + props.margin.top)
+          .attr('stroke', 'white')
+          .attr('stroke-width', 2);
 
-      // // Render the save button.
-      // let saveBtn = d3.select('body')
-      //   .selectAll('.btn.btn-save')
-      //   .data(changed ? [getOffset(svgEl)] : []);
-      // saveBtn.exit().remove();
-      // saveBtn = saveBtn
-      //   .enter()
-      //   .append('button')
-      //     .attr('class', 'btn btn-primary btn-save')
-      //     .on('touchend', _.partial(onSaveClick, svg))
-      //   .merge(saveBtn)
-      //     .style('position', 'absolute')
-      //     .style('top', d => `calc(${d.top + d.height}px - 5rem)`)
-      //     .style('left', d => `calc(${d.left + d.width}px - 5rem)`)
-      //     .text('Save');
+      // Render the save button.
+      let saveBtn = d3.select('body')
+        .selectAll('.btn.btn-save')
+        .data(changed ? [getOffset(svgEl)] : []);
+      saveBtn.exit().remove();
+      saveBtn = saveBtn
+        .enter()
+        .append('button')
+          .attr('class', 'btn btn-primary btn-save')
+          .on('touchend', _.partial(onSaveClick, svg))
+        .merge(saveBtn)
+          .style('position', 'absolute')
+          .style('top', d => `calc(${d.top + d.height}px - 5rem)`)
+          .style('left', d => `calc(${d.left + d.width}px - 5rem)`)
+          .text('Save');
 
       return overlay;
     }
@@ -872,7 +872,7 @@
           ).pipe(filterTouches(touchIds));
           return touchend$.pipe(
             first(),
-            takeUntil(touchmove$.pipe(elementAt(3))),
+            takeUntil(touchmove$.pipe(elementAt(5))),
             takeUntil(timer(PRESS_INTERVAL)),
             catchError(err => empty())
           );
@@ -905,7 +905,7 @@
             fromEvent(this, 'touchcancel')
           ).pipe(filterTouches(touchIds));
           return timer(PRESS_INTERVAL).pipe(
-            takeUntil(touchmove$.pipe(elementAt(3))),
+            takeUntil(touchmove$.pipe(elementAt(5))),
             takeUntil(touchend$),
             map(() => touchPoint(containerEl, touches)),
             catchError(err => empty())
@@ -1038,7 +1038,6 @@
 
       // Sketch start events.
       const sketch$ = fromEvent(this, 'touchstart').pipe(
-        filter(() => !localSketching.get(svgEl)),
         tap(preventDefault),
         map(evt => toTouchArray(evt.changedTouches)),
         concatMap(touches => {
@@ -1052,7 +1051,7 @@
           return touchmove$.pipe(
             takeUntil(touchend$),
             takeUntil(timer(PRESS_INTERVAL)),
-            bufferCount(3),
+            bufferCount(5),
             first(),
             catchError(err => empty())
           );
@@ -1131,7 +1130,7 @@
       localSketching.set(svgEl, true);
       localChanged.set(svgEl, true);
       renderSketch(svg);
-      // renderOverlay(svg);
+      renderOverlay(svg);
       renderPoints(svg);
       dispatch.call('sketchStart', svgEl, getInverse(svg, curve));
     }
@@ -1145,7 +1144,7 @@
         const curve = localCurve.get(svgEl);
         curve.push(point);
         renderSketch(svg);
-        // renderOverlay(svg);
+        renderOverlay(svg);
         dispatch.call('sketch', svgEl, getInverse(svg, curve));
       }
     }
@@ -1160,7 +1159,7 @@
       const curve = localCurve.get(svgEl);
       localSketching.set(svgEl, false);
       // TODO: Post-processing of curve?
-      // renderOverlay(svg);
+      renderOverlay(svg);
       dispatch.call('sketchEnd', svgEl, getInverse(svg, curve));
     }
 
@@ -1175,7 +1174,7 @@
       point.selected = true;
       localChanged.set(svgEl, true);
       renderPoints(svg);
-      // renderOverlay(svg);
+      renderOverlay(svg);
     }
 
     function onCurveMove(svg, point, touchPoint) {
@@ -1226,7 +1225,7 @@
       point.selected = false;
       localChanged.set(svgEl, true);
       renderPoints(svg);
-      // renderOverlay(svg);
+      renderOverlay(svg);
       dispatch.call('pointsChange', svgEl, getInverse(svg, points));
     }
 
@@ -1244,7 +1243,7 @@
       localChanged.set(svgEl, true);
       renderPoints(svg);
       renderMenus(svg);
-      // renderOverlay(svg);
+      renderOverlay(svg);
       dispatch.call('pointsChange', svgEl, getInverse(svg, points));
     }
 
@@ -1259,7 +1258,7 @@
       point.menu = false;
       localChanged.set(svgEl, true);
       renderPoints(svg);
-      // renderOverlay(svg);
+      renderOverlay(svg);
       // Adding a slight delay gives feedback that the menu option was pressed.
       setTimeout(() => { renderMenus(svg); }, 250);
       dispatch.call('pointsChange', svgEl, getInverse(svg, points));
@@ -1271,7 +1270,7 @@
       _.pull(points, point);
       localChanged.set(svgEl, true);
       renderPoints(svg);
-      // renderOverlay(svg);
+      renderOverlay(svg);
       setTimeout(() => { renderMenus(svg); }, 250);
       dispatch.call('pointsChange', svgEl, getInverse(svg, points));
     }
@@ -1281,7 +1280,7 @@
       const curve = localCurve.get(svgEl);
       const points = localPoints.get(svgEl);
       localChanged.set(svgEl, false);
-      // renderOverlay(svg);
+      renderOverlay(svg);
       dispatch.call('sketchSave', svgEl, getInverse(svg, curve), getInverse(svg, points));
     }
 
