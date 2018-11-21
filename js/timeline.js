@@ -29,10 +29,39 @@
     value: undefined,
   };
   const DOUBLE_TAP_INTERVAL = 350;
-  const PRESS_INTERVAL = 300;
+  const PRESS_INTERVAL = 200;
   const CURVE_DISTANCE = 20;
   const POINT_DISTANCE = 20;
 
+  /**
+   * Select all points between two points. Inclusive by default.
+   * @param {array<number>} pointA The first point.
+   * @param {array<number>} pointB The second point.
+   * @param {boolean} exclusive If true, the given points are not included.
+   */
+  function sliceBetween(points, pointA, pointB, exclusive) {
+    const min = pointA[0] < pointB[0] ? pointA[0] : pointB[0];
+    const max = pointA[0] >= pointB[0] ? pointA[0] : pointB[0];
+
+    let pos;
+    const slice = [];
+    const before = [];
+    const after = [];
+    points.forEach(point => {
+      pos = point[0];
+      if (pos < min) {
+        before.push(point);
+      } else if (pos > max) {
+        after.push(point);
+      } else if ((pos >= min
+        && pos <= max
+        && (!exclusive || (point !== pointA && point !== pointB)))) {
+        slice.push(point);
+      }
+    });
+
+    return [before, slice, after];
+  }
 
   /**
    * Return the offset of an element relative to the page.
@@ -1197,16 +1226,47 @@
     function onPointMove(svg, point, touchPoint) {
       // console.debug('POINT MOVE:', point, touchPoint);
       const svgEl = svg.node();
-      const sketchEl = svg.select('.series.visible').node();
       const points = localPoints.get(svgEl);
-      const selectedCount = points.filter(d => d.selected).length;
+      const selected = points.filter(d => d.selected);
 
-      if (selectedCount > 1) {
-        console.log('STRETCH/TRUNCATE');
+      if (selected.length === 2) {
+        const curve = localCurve.get(svgEl);
+        
+        const anchor = selected.reduce((a, p) => p !== point ? p : a, [0, 0]);
+        const oldDist = point[0] - anchor[0];
+        const newDist = touchPoint[0] - anchor[0];
+        const scale = newDist / oldDist;
+        const translation = anchor[0];
+        const diff = newDist - oldDist;
 
-
+        // Translate to origin (based on anchor), scale, translate back.
+        let [before, between, after] = sliceBetween(curve, anchor, point);
+        between.forEach(p => {
+          p[0] -= translation;
+          p[0] *= scale;
+          p[0] += translation;
+        });
+        if (point[0] <= anchor[0]) {
+          before.forEach(p => { p[0] += diff; });
+        } else if (point[0] >= anchor[0]) {
+          after.forEach(p => { p[0] += diff; });
+        }
+        ([before, between, after] = sliceBetween(points, anchor, point));
+        between.forEach(p => {
+          p[0] -= translation;
+          p[0] *= scale;
+          p[0] += translation;
+        });
+        if (point[0] <= anchor[0]) {
+          before.forEach(p => { p[0] += diff; });
+        } else if (point[0] >= anchor[0]) {
+          after.forEach(p => { p[0] += diff; });
+        }
+        renderSketch(svg);
+        renderPoints(svg);
       } else {
         // Move the point by finding the closest point on the curve.
+        const sketchEl = svg.select('.series.visible').node();
         const closest = closestPathPoint(sketchEl, touchPoint);
         point[0] = closest[0];
         point[1] = closest[1];
