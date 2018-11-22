@@ -30,6 +30,7 @@
   };
   const DOUBLE_TAP_INTERVAL = 350;
   const PRESS_INTERVAL = 200;
+  const DELTA_DISTANCE = 10;
   const CURVE_DISTANCE = 20;
   const POINT_DISTANCE = 20;
 
@@ -867,7 +868,18 @@
       const svgEl = svg.node();
       const containerEl = svg.select('.sketch-content').node();
       const { empty, fromEvent, merge, timer } = rxjs;
-      const { bufferCount, catchError, concatMap, elementAt, filter, first, map, mergeMap, partition, publish, share, takeUntil, tap } = rxjs.operators;
+      const {
+        buffer,
+        catchError,
+        concatMap,
+        filter,
+        first,
+        map,
+        mergeMap,
+        share,
+        takeUntil,
+        tap,
+      } = rxjs.operators;
 
       // In order to get the best precision, the overlay handles all touch events.
       // Single finger events:
@@ -887,21 +899,28 @@
       //    - onSketchEnd
       //    - onPointMove
       //    - onSketchMove
-      const singlestart$ = touchStream(this, 'touchstart', 1);
 
-      // All single finger taps.
-      const tap$ = singlestart$.pipe(
+      // Single finger taps.
+      const tap$ = touchStream(this, 'touchstart', 1).pipe(
         concatMap(touches => {
+          const initPoint = touchPoint(containerEl, touches);
           const touchIds = touches.map(t => t.identifier);
-          const touchmove$ = fromEvent(this, 'touchmove')
-            .pipe(filterTouches(touchIds));
+          // Emit events when a significant amount of movement has occured after the touch start.
+          const touchdelta$ = fromEvent(this, 'touchmove').pipe(
+            filterTouches(touchIds),
+            map(touches => touchPoint(containerEl, touches)),
+            map(point => distanceTo(point, initPoint)),
+            filter(dist => dist > DELTA_DISTANCE)
+          );
+          // Emit events that end the touch.
           const touchend$ = merge(
             fromEvent(this, 'touchend'),
             fromEvent(this, 'touchcancel')
           ).pipe(filterTouches(touchIds));
+          // Emit touch ending events that are not interrupted by movement or the timeout for a press.
           return touchend$.pipe(
             first(),
-            takeUntil(touchmove$.pipe(elementAt(5))),
+            takeUntil(touchdelta$),
             takeUntil(timer(PRESS_INTERVAL)),
             catchError(err => empty())
           );
@@ -926,15 +945,23 @@
         tap(preventDefault),
         map(evt => toTouchArray(evt.changedTouches)),
         concatMap(touches => {
+          const initPoint = touchPoint(containerEl, touches);
           const touchIds = touches.map(t => t.identifier);
-          const touchmove$ = fromEvent(this, 'touchmove')
-            .pipe(filterTouches(touchIds));
+          // Emit events when a significant amount of movement has occured after the touch start.
+          const touchdelta$ = fromEvent(this, 'touchmove').pipe(
+            filterTouches(touchIds),
+            map(touches => touchPoint(containerEl, touches)),
+            map(point => distanceTo(point, initPoint)),
+            filter(dist => dist > DELTA_DISTANCE)
+          );
+          // Emit events that end the touch.
           const touchend$ = merge(
             fromEvent(this, 'touchend'),
             fromEvent(this, 'touchcancel')
           ).pipe(filterTouches(touchIds));
+          // Emit an event after a timeout, unless it is interrupted by movement or an event ending the touch.
           return timer(PRESS_INTERVAL).pipe(
-            takeUntil(touchmove$.pipe(elementAt(5))),
+            takeUntil(touchdelta$),
             takeUntil(touchend$),
             map(() => touchPoint(containerEl, touches)),
             catchError(err => empty())
@@ -999,6 +1026,7 @@
           return touchmove$.pipe(
             takeUntil(touchend$),
             map(touches => [point, touchPoint(containerEl, touches)]),
+            catchError(err => empty())
           );
         })
       ).subscribe(([oldPoint, newPoint]) => onPointMove(svg, oldPoint, newPoint));
@@ -1013,7 +1041,8 @@
           ).pipe(
             filterTouches(touchIds),
             first(),
-            map(() => point)
+            map(() => point),
+            catchError(err => empty())
           );
         })
       ).subscribe(_.partial(onPointRelease, svg));
@@ -1031,6 +1060,7 @@
           return touchmove$.pipe(
             takeUntil(touchend$),
             map(touches => [point, touchPoint(containerEl, touches)]),
+            catchError(err => empty())
           );
         })
       ).subscribe(([oldPoint, newPoint]) => onCurveMove(svg, oldPoint, newPoint));
@@ -1045,7 +1075,8 @@
           ).pipe(
             filterTouches(touchIds),
             first(),
-            map(() => point)
+            map(() => point),
+            catchError(err => empty())
           );
         })
       ).subscribe(_.partial(onCurveRelease, svg));
@@ -1060,7 +1091,8 @@
           ).pipe(
             filterTouches(touchIds),
             first(),
-            map(() => point)
+            map(() => point),
+            catchError(err => empty())
           );
         })
       ).subscribe(_.partial(onOtherRelease, svg));
@@ -1070,18 +1102,29 @@
         tap(preventDefault),
         map(evt => toTouchArray(evt.changedTouches)),
         concatMap(touches => {
+          const initPoint = touchPoint(containerEl, touches);
           const touchIds = touches.map(t => t.identifier);
           const touchmove$ = fromEvent(this, 'touchmove')
-            .pipe(filterTouches(touchIds));
+            .pipe(filterTouches(touchIds), share());
+          // Emit events when a significant amount of movement has occured after the touch start.
+          const touchdelta$ = touchmove$.pipe(
+            map(touches => touchPoint(containerEl, touches)),
+            map(point => distanceTo(point, initPoint)),
+            filter(dist => dist > DELTA_DISTANCE)
+          );
+          // Emit events that end the touch.
           const touchend$ = merge(
             fromEvent(this, 'touchend'),
             fromEvent(this, 'touchcancel')
           ).pipe(filterTouches(touchIds));
+          // Buffer touch movement until significant movement occurs uninterrupted by an event ending the touch or by
+          // the timer for a press. Release the buffer as a cluster of touches to start the sketch.
           return touchmove$.pipe(
             takeUntil(touchend$),
             takeUntil(timer(PRESS_INTERVAL)),
-            bufferCount(5),
+            buffer(touchdelta$),
             first(),
+            map(head => head.length === 0 ? [touches] : head),
             catchError(err => empty())
           );
         }),
@@ -1099,7 +1142,10 @@
             fromEvent(this, 'touchend'),
             fromEvent(this, 'touchcancel')
           ).pipe(filterTouches(touchIds));
-          return touchmove$.pipe(takeUntil(touchend$));
+          return touchmove$.pipe(
+            takeUntil(touchend$),
+            catchError(err => empty())
+          );
         })
       ).subscribe(_.partial(onSketch, svg));
 
@@ -1112,7 +1158,8 @@
             fromEvent(this, 'touchcancel')
           ).pipe(
             filterTouches(touchIds),
-            first()
+            first(),
+            catchError(err => empty())
           );
         })
       ).subscribe(_.partial(onSketchEnd, svg));
@@ -1120,10 +1167,6 @@
       // Two finger events:
       // 1. Press and {sketch, move}
       // 2. Pinch and zoom
-      // const doublestart$ = touchStream(this, 'touchstart', 2);
-      // const pressstart$ = doublestart$.pipe(
-      //   filter(() => localPoints.get(svgEl).some(d => d.selected))
-      // ).subscribe(() => console.log('PRESS +'));
 
       // const pressmove
 
@@ -1149,11 +1192,10 @@
     }
 
     function onSketchStart(svg, head) {
-      // console.debug('SKETCH START:', head);
       const svgEl = svg.node();
       const containerEl = svg.select('.sketch-content').node();
       const points = head.map(touches => touchPoint(containerEl, touches));
-      const curve = points // TODO: Handle sketching of partial segments.
+      const curve = points; // TODO: Handle sketching of partial segments.
       localCurve.set(svgEl, curve);
       localPoints.set(svgEl, []);
       localSketching.set(svgEl, true);
@@ -1165,7 +1207,6 @@
     }
 
     function onSketch(svg, touches) {
-      // console.debug('SKETCH:', touches);
       const svgEl = svg.node();
       const containerEl = svg.select('.sketch-content').node();
       if (localSketching.get(svgEl)) {
@@ -1178,12 +1219,7 @@
       }
     }
 
-    function onSketchError(svg, err) {
-      // console.debug('SKETCH ERROR:', err);
-    }
-
     function onSketchEnd(svg, touches) {
-      // console.debug('SKETCH END:', touches);
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
       localSketching.set(svgEl, false);
@@ -1193,7 +1229,6 @@
     }
 
     function onCurvePress(svg, point) {
-      // console.debug('CURVE PRESS:', point);
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
       // Insert a new point in the selected state.
@@ -1207,24 +1242,20 @@
     }
 
     function onCurveMove(svg, point, touchPoint) {
-      // console.debug('CURVE MOVE:', point);
       onPointMove(svg, point, touchPoint);
     }
 
     function onCurveRelease(svg, point) {
-      // console.debug('CURVE RELEASE:', point);
       onPointRelease(svg, point);
     }
 
     function onPointPress(svg, point) {
-      // console.debug('POINT PRESS:', point);
       // Select the point.
       point.selected = true;
       renderPoints(svg);
     }
 
     function onPointMove(svg, point, touchPoint) {
-      // console.debug('POINT MOVE:', point, touchPoint);
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
       const selected = points.filter(d => d.selected);
@@ -1246,6 +1277,7 @@
           p[0] *= scale;
           p[0] += translation;
         });
+        // Translate points on the other side of the moved point.
         if (point[0] <= anchor[0]) {
           before.forEach(p => { p[0] += diff; });
         } else if (point[0] >= anchor[0]) {
@@ -1275,7 +1307,6 @@
     }
 
     function onPointRelease(svg, point) {
-      // console.debug('POINT RELEASE:', point);
       // Deselect the point and re-index its position. It may have changed due to movement.
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
@@ -1295,7 +1326,6 @@
     }
 
     function onOtherPress(svg, point) {
-      // console.debug('OTHER PRESS:', point);
       // Clear existing control points.
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
@@ -1308,7 +1338,6 @@
     }
 
     function onOtherRelease(svg, point) {
-      // console.debug('OTHER RELEASE:', point);
     }
 
     function onMenuChange(svg, point, option) {
@@ -1338,9 +1367,9 @@
     function onSaveClick(svg) {
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
-      const points = localPoints.get(svgEl);
+      const points = localPoints.get(svgEl).filter(d => !!d.type.value);
       localChanged.set(svgEl, false);
-      renderOverlay(svg);
+      setTimeout(() => { renderOverlay(svg); }, 250);
       dispatch.call('sketchSave', svgEl, getInverse(svg, curve), getInverse(svg, points));
     }
 
