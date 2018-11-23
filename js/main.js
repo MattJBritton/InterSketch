@@ -4,6 +4,8 @@
   let startDate = new Date(2017,5,1);
   let endDate = new Date(2017,6,25);
   let strictIsoParse = d3.utcParse("%Y-%m-%dT%H:%M:%S.%L%Z");
+  let div = d3.select("#timeline");
+  let loaded_data = [];
 
   //function to find null y values that need to be interpolated
   function find_null_indices(d,i){
@@ -38,75 +40,169 @@
   }
 
   //distance function for DTW
-  distFunc = function( a, b ) {
-    return Math.abs( a - b );
+  distFunc = function(a, b) {
+    return Math.pow(Math.abs(a-b), 2);
+    //return Math.abs(a-b);
   };
 
   function roundForDTW(d) {
     return Math.round(d*10)/10.;
   }
 
-  function calculateDTW(svg, timeline, sketch, data){
+  function calculateDTW(sketch){
 
-      mapDTW = {}
-      //turn sketch into X:Y dict
-      mapSketch = {}
-      sketch.forEach(d => mapSketch[roundForDTW(d[0])] = d[1]);
+    mapDTW = {}
+    //turn sketch into X:Y dict
+    mapSketch = {}
+    sketch.forEach(d => mapSketch[roundForDTW(d[0])] = d[1]);
 
-      //iterate through each curve and find points in the curve with the same X
-      //DTW library needs exact pairs
-      Object.entries(data).forEach(outer => {
+    //iterate through each curve and find points in the curve with the same X
+    //DTW library needs exact pairs
+    Object.entries(loaded_data[0].series).forEach(outer => {
 
-        tempCoordinates = [];
-        tempSketchCoordinates = [];
-        key = outer[0];
-        value = outer[1];
+      tempCoordinates = [];
+      tempSketchCoordinates = [];
+      key = outer[1].date;
+      value = outer[1];
 
-        value.curve.forEach(inner =>{
+      value.curve.forEach(inner =>{
 
-          x = roundForDTW(inner.x);
-          if(x in mapSketch) {
+        x = roundForDTW(inner.x);
+        if(x in mapSketch) {
 
-            tempCoordinates.push(inner.y);
-            tempSketchCoordinates.push(mapSketch[x]);
-          }
-        })
+          tempCoordinates.push(inner.y);
+          tempSketchCoordinates.push(mapSketch[x]);
+        }
+      })
+
+      if(tempCoordinates.length >= 3) {
 
         mapDTW[key] = {
           'sketch': tempSketchCoordinates, 
           'data' : tempCoordinates
         };
-      })
+      }
+    })
 
-      //calculate DTW for each series
-      Object.entries(mapDTW).forEach(d=> {
+    //if no common points between sketch and data, return nothing
+    if(mapDTW.length < 3) {
+      return [];
+    }
 
-        key = d[0];
-        value = d[1];
-        var dist = new DynamicTimeWarping(
-                                        value['data'], 
-                                        value['sketch'], 
-                                        distFunc
-                                        ).getDistance();
+    matches = [];
+    //calculate DTW for each series
+    Object.entries(mapDTW).forEach(d=> {
 
-        //arbitrary treshold for now
-        data[key].match = (dist/value['data'].length <= 25);
-      })
+      key = d[0];
+      value = d[1];
+      var dist = new DynamicTimeWarping(
+                                      value['data'], 
+                                      value['sketch'], 
+                                      distFunc
+                                      ).getDistance();
 
-      svg
-        .datum({
-          series: data,
-          sketch: [],
-        })
-        .call(timeline);      
+      //arbitrary treshold for now
+      if (dist/value['data'].length <= 400){
+
+        matches.push(key);
+      };
+    })
+
+    return matches;
   }
+
+function generate_cluster(sketch, bolCreateMultiple) {
+
+  matches = calculateDTW(sketch);
+
+  if(bolCreateMultiple && matches.length>0) {
+
+    add_timeline(loaded_data[0].series.filter(
+      d => matches.includes(d.date)), sketch);
+
+    loaded_data[0].series = loaded_data[0].series.filter(
+      d => !matches.includes(d.date))
+
+    //reload main timeline
+    call_timeline(0);
+
+    //new timeline
+    call_timeline(loaded_data.length-1);         
+
+  } else {
+
+    loaded_data[0]["series"].forEach( d => {
+
+      d.match = matches.includes(d.date);
+    });
+
+    call_timeline(0);
+  }  
+}
+
+function add_timeline(series, sketch) {
+
+    loaded_data.push({
+      'series': series,
+      'sketch': sketch,
+      'timeline': build_timeline(),
+      'svg': div.append("svg")
+        .attr("width", 800)
+        .attr("id", "svg_"+loaded_data.length-1)
+        .style("top", (loaded_data.length-1)*220)
+    })
+}
+
+function build_timeline() {
+
+  // Create the main timeline component.
+  const now = moment();
+  const new_timeline = timeline()
+    .margin({ top: 10, right: 10, left: 30, bottom: 30 })
+    .axis({ bottom: true, left: true })
+    .curve(d3.curveMonotoneX)
+    .x(d => d.x)
+    .y(d => d.y)
+    .xDomain([0, 24])
+    .yDomain([0, 400])
+    .seriesKey(s => now.diff(moment(s.date), 'days'))
+    .seriesData(s => s.curve)
+    .on('sketchStart', (curve) => {
+      //console.log('sketchStart:', curve);
+    })
+    .on('sketch', (curve) => {
+      //console.log('sketch:', curve);
+    })
+    .on('sketchEnd', function(curve){
+      //console.log('sketchEnd', curve);
+      loaded_data[0].sketch = curve;
+      generate_cluster(curve, false);
+    })
+    .on('sketchSave', function(curve, points){
+      console.log('sketchSave', curve, points);
+      loaded_data[0].sketch = [];
+      generate_cluster(curve, true);
+    }); 
+
+    return new_timeline; 
+}  
+
+  function call_timeline(timeline_num) {
+
+    loaded_data[timeline_num].svg
+      .datum({
+        series: loaded_data[timeline_num].series,
+        sketch: loaded_data[timeline_num].sketch,
+      })
+      .call(loaded_data[timeline_num].timeline);  
+  }
+
+  //LOAD DATA
   Promise.all([
     d3.json("static/treatments.json"),
     d3.json("static/entries.json")
   ])
   .then(([events, series]) => {
-
-    console.log(events);
 
     events_grouped = d3.nest()
       .key(d => d.date)
@@ -177,43 +273,10 @@
   })    
   .then(series => {
 
-    console.log(series);
+    add_timeline(series, []);
 
-    svg = d3.select("#timeline");
-
-    // Create the main timeline component.
-    const now = moment();
-    const mainTimeline = timeline()
-      .margin({ top: 10, right: 10, left: 30, bottom: 30 })
-      .axis({ bottom: true, left: true })
-      .curve(d3.curveMonotoneX)
-      .x(d => d.x)
-      .y(d => d.y)
-      .xDomain([0, 24])
-      .yDomain([0, undefined])
-      .seriesKey(s => now.diff(moment(s.date), 'days'))
-      .seriesData(s => s.curve)
-      .on('sketchStart', (curve) => {
-        //console.log('sketchStart:', curve);
-      })
-      .on('sketch', (curve) => {
-        //console.log('sketch:', curve);
-      })
-      .on('sketchEnd', function(curve){
-        console.log('sketchEnd', curve);
-        calculateDTW(svg, mainTimeline, curve, series);
-      })
-      .on('sketchSave', function(curve, points) {
-        console.log('sketchSave:', curve, points);
-      });
-
-    // Example: render the main timeline component.
-    svg
-      .datum({
-        series: series,
-        sketch: [],
-      })
-      .call(mainTimeline);
+    // Render the main timeline component.
+    call_timeline(0);
   });
 
 })(window, window.timeline, window.d3, window.moment, window._);
