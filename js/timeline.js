@@ -490,7 +490,7 @@
       svgSelection.each(function(data) {
         // Set the chart ID.
         if (localId.get(this) === undefined) { localId.set(this, _.uniqueId('timeline')); }
-        if (localCurve.get(this) === undefined) { localCurve.set(this, []); }
+        //if (localCurve.get(this) === undefined) { localCurve.set(this, []); }
         if (localPoints.get(this) === undefined) { localPoints.set(this, []); }
 
         // Calculate chart properties.
@@ -502,6 +502,7 @@
         // Persist the props and scales locally.
         localProps.set(this, props);
         localScales.set(this, scales);
+        localCurve.set(this, getPoints(svg, data.sketch));
 
         // Render the chart skeleton.
         renderChart(svg, props);
@@ -579,6 +580,25 @@
       } = localScales.get(svg.node());
       return points.map(p => [xScale.invert(p[0]), yScale.invert(p[1])]);
     }
+
+    /**
+     * Convert the given data into the point space.
+     * @param {object} svg The SVG selection
+     * @param {array<array<number>>} points The points to transform
+     */
+    function getPoints(svg, data) {
+
+      if(data === undefined || data == []) {
+
+        return [];
+      } else {
+        const {
+          x: xScale,
+          y: yScale,
+        } = localScales.get(svg.node());
+        return data.map(d => [xScale(d[0]), yScale(d[1])]);
+      }
+    }    
 
     /**
      * Render the chart skeleton, binding data to the appropriate content areas.
