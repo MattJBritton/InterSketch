@@ -6,6 +6,7 @@
   const DEFAULT_Y_ACCESSOR = d => d.y;
   const DEFAULT_X_DOMAIN = [undefined, undefined];
   const DEFAULT_Y_DOMAIN = [0, undefined];
+  const DEFAULT_SERIES_DOMAIN = [undefined, undefined];
   const DEFAULT_SERIES_SCHEME = d3.interpolateInferno;
   const DEFAULT_SERIES_KEY_ACCESSOR = d => d.key;
   const DEFAULT_SERIES_DATA_ACCESSOR = d => d.curve;
@@ -546,6 +547,7 @@
     let yAccessor = DEFAULT_Y_ACCESSOR;
     let xDomain = DEFAULT_X_DOMAIN;
     let yDomain = DEFAULT_Y_DOMAIN;
+    let seriesDomain = DEFAULT_SERIES_DOMAIN;
     let seriesScheme = DEFAULT_SERIES_SCHEME;
     let seriesKeyAccessor = DEFAULT_SERIES_KEY_ACCESSOR;
     let seriesDataAccessor = DEFAULT_SERIES_DATA_ACCESSOR;
@@ -638,8 +640,15 @@
       const yExtent = mergeExtent(data.series, seriesDataAccessor, yAccessor, yDomain);
       const keys = data.series.map(seriesKeyAccessor);
       const keyType = commonType(keys);
-      const keyExtent = keyType === 'number' ? d3.extent(keys) : domain(keys);
-
+      const keyExtent = seriesDomain[0] === undefined || seriesDomain[1] === undefined
+        ? keyType === 'number' ? d3.extent(keys) : domain(keys)
+        : seriesDomain;
+      if (seriesDomain[0] !== undefined) {
+        keyExtent[0] = seriesDomain[0];
+      }
+      if (seriesDomain[1] !== undefined) {
+        keyExtent[1] = seriesDomain[1];
+      }
       const xRange = [props.padding.left, props.chartWidth - props.padding.right];
       const yRange = [props.chartHeight - props.padding.bottom, props.padding.top];  
 
@@ -834,7 +843,6 @@
         y: yScale,
         key: keyScale,
       } = scales;
-
       line = d3.line()
         .x((d, i) => xScale(xAccessor(d, i)))
         .y((d, i) => yScale(yAccessor(d, i)))
@@ -844,7 +852,6 @@
         .selectAll('.series')
         .data(data.series ? data.series : []);
       series.exit().remove();
-
       series = series
         .enter()
         .append('path')
@@ -852,13 +859,9 @@
           .attr('fill', 'none')
           .attr('stroke', d => keyScale(seriesKeyAccessor(d)))
         .merge(series)
-          .attr('opacity', d=> 
-            (localCurve.get(svg.node()).length == 0 
-            || matchAccessor(d))?.7:.2)
-          .attr('stroke-width', d=> 
-            (localCurve.get(svg.node()).length >= 0 
-            && matchAccessor(d))?2:1)          
-          .attr('d', d => line(seriesDataAccessor(d)));
+          .attr('d', d => line(seriesDataAccessor(d)))
+          .attr('opacity', d => data.sketch.length == 0 || matchAccessor(d) ? 1 : .1)
+          .attr('stroke-width', d => data.sketch.length > 0 && matchAccessor(d) ? 2 : 1)
     }
 
     /**
@@ -962,8 +965,9 @@
           .attr('x2', d => d[0] + props.margin.left)
           .attr('y1', props.margin.top)
           .attr('y2', props.chartHeight + props.margin.top)
-          .attr('stroke', 'white')
-          .attr('stroke-width', 4);
+          .attr('stroke', 'gray')
+          .attr('stroke-width', 2)
+          .attr('stroke-dasharray', 4);
 
       // Render the save button.
       let saveBtn = d3.select('body')
@@ -1753,7 +1757,7 @@
     /**
      * If x is specified, set the x domain to the given [min, max] extent and return this timeline. Otherwise, return
      * the current x domain.
-     * @param {array<number|undefined} x The x domain. Values set to undefined will be calculated dynamically. If null,
+     * @param {array<number>|undefined} x The x domain. Values set to undefined will be calculated dynamically. If null,
      * the x domain is set to its default value, which is [undefined, undefined].
      */
     timeline.xDomain = function(x) {
@@ -1770,7 +1774,7 @@
     /**
      * If y is specified, set the y domain to the given [min, max] extent and return this timeline. Otherwise, return
      * the current y domain.
-     * @param {array<number|undefined} y The y domain. Values set to undefined will be calculated dynamically. If null,
+     * @param {array<number>|undefined} y The y domain. Values set to undefined will be calculated dynamically. If null,
      * the y domain is set to its default value, which is [0, undefined].
      */
     timeline.yDomain = function(y) {
@@ -1782,6 +1786,23 @@
         return timeline;
       }
       return yDomain.slice();
+    };
+
+    /**
+     * If s is specified, set the series domain to the given [min, max] extent and return this timeline. Otherwise,
+     * return the current series domain.
+     * @param {array<number>|undefined} s The series domain. Values set to undefined will be calculated dynamically.
+     * If null, the color domain is set to its default value, which is [undefined, undefined].
+     */
+    timeline.seriesDomain = function(s) {
+      if (s === null) {
+        seriesDomain = DEFAULT_SERIES_DOMAIN;
+        return timeline;
+      } else if (s !== undefined) {
+        seriesDomain = s;
+        return timeline;
+      }
+      return seriesDomain.slice(0);
     };
 
     /**
