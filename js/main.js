@@ -143,7 +143,6 @@
   }
 
   function calculateDTW(sketch, points){
-
     var mapDTW = {}
     var matches = [];
     //turn sketch into X:Y dict
@@ -225,7 +224,7 @@ function add_timeline(series, sketch, points, smallMultiple) {
       points: points,
       timeline: build_timeline(smallMultiple),
       svg: div.append("svg")
-        .attr("width", 800)
+        .attr("width", '85%')
         .attr("height", 300)
         .attr("id", "svg_"+loaded_data.length-1)
         .style("top", (loaded_data.length-1)*320)
@@ -238,6 +237,7 @@ function build_timeline(smallMultiple) {
   const now = moment();
   return timeline()
     .margin({ top: 10, right: 10, left: 30, bottom: 30 })
+    .padding({ top: 2 })
     .axis({ bottom: true, left: true })
     .curve(d3.curveMonotoneX)
     .x(d => d.x)
@@ -247,28 +247,17 @@ function build_timeline(smallMultiple) {
     .seriesKey(s => now.diff(moment(s.date), 'days'))
     .seriesData(s => s.curve)
     .smallMultiple(smallMultiple)
-    .on('sketchStart', (curve) => {
-      //console.log('sketchStart:', curve);
-    })
-    .on('sketch', (curve) => {
-      //console.log('sketch:', curve);
-    })
-    .on('sketchEnd', function(curve, points){
-      //console.log('sketchEnd', curve, points);
+    .on('change', function(curve, points){
+      //console.log('change', curve, points);
       loaded_data[0].sketch = curve;
       loaded_data[0].points = points;
-      generate_cluster(curve, points, false);
+      generate_cluster(curve, points.filter(p => !!p.type.value), false); // Only consider points that are an event type.
     })
-    .on('pointsChange', function(points){
-      console.log('pointsChange', points);
-      loaded_data[0].points = points;
-      generate_cluster(loaded_data[0].sketch, points, false);
-    })    
     .on('sketchSave', function(curve, points){
-      console.log('sketchSave', curve, points);
+      // console.log('sketchSave', curve, points);
       loaded_data[0].sketch = [];
       loaded_data[0].points = [];
-      generate_cluster(curve, points, true);
+      generate_cluster(curve, points.filter(p => !!p.type.value), true);
     }); 
 }  
 
