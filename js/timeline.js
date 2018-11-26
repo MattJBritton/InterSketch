@@ -495,6 +495,8 @@
           localId.set(this, _.uniqueId('timeline')); 
         }
 
+        console.log(data);
+
         // Calculate chart properties.
         const svg = d3.select(this);
         const props = getProps(svg);
@@ -1299,7 +1301,8 @@
       localSketching.set(svgEl, false);
       // TODO: Post-processing of curve?
       renderOverlay(svg);
-      dispatch.call('sketchEnd', svgEl, getInverse(svg, curve));
+      dispatch.call('sketchEnd', svgEl, getInverse(svg, curve),
+        exportPoints(svg, points[0]));
     }
 
     function onSaveClick(svg) {
