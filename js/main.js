@@ -139,9 +139,6 @@
   }
 
   function getDistance(curve, sketch) {
-    console.log('GET DISTANCE:', curve, sketch);
-
-
     return (new DynamicTimeWarping(curve, sketch, distFunc)
       .getDistance()/ curve.length) <= 400; //arbitrary threshold 
   }
@@ -227,7 +224,7 @@ function add_timeline(series, sketch, points, smallMultiple) {
       points: points,
       timeline: build_timeline(smallMultiple),
       svg: div.append("svg")
-        .attr("width", '85%')
+        .attr("width", '100%')
         .attr("height", 300)
         .attr("id", "svg_"+loaded_data.length-1)
         .style("top", (loaded_data.length-1)*320)
@@ -239,7 +236,7 @@ function build_timeline(smallMultiple) {
   // Create the main timeline component.
   const now = moment();
   return timeline()
-    .margin({ top: 10, right: 10, left: 30, bottom: 30 })
+    .margin({ top: 10, right: 80, left: 30, bottom: 30 })
     .padding({ top: 2 })
     .axis({ bottom: 'Hour of Day', left: 'Measurement' })
     .curve(d3.curveMonotoneX)
@@ -251,6 +248,8 @@ function build_timeline(smallMultiple) {
     .seriesScheme(d3.interpolatePuBu)
     .seriesKey(s => now.diff(moment(s.date), 'days'))
     .seriesData(s => s.curve)
+    .legendTitle('# of Days Ago')
+    .legendCells(7)
     .smallMultiple(smallMultiple)
     .on('change', function(curve, points){
       //console.log('change', curve, points);
@@ -283,7 +282,7 @@ function build_timeline(smallMultiple) {
     const now = moment();
     const seriesKeyAccessor = s => now.diff(moment(s.date), 'days');
     const keys = series.map(seriesKeyAccessor);
-    return d3.extent(keys);
+    return d3.extent(keys).reverse();
   }
 
   /****************

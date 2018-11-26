@@ -2,6 +2,8 @@
 // TODO: Better padding.
 (function(global, d3, _, contextMenu, vector) {
   const DEFAULT_SMALL_MULTIPLE = false;
+  const DEFAULT_LEGEND_TITLE = 'Series';
+  const DEFAULT_LEGEND_CELLS = 5;
   const DEFAULT_X_ACCESSOR = d => d.x;
   const DEFAULT_Y_ACCESSOR = d => d.y;
   const DEFAULT_X_DOMAIN = [undefined, undefined];
@@ -564,6 +566,8 @@
     let marginProps = Object.assign({}, DEFAULT_MARGIN_PROPS);
     let paddingProps = Object.assign({}, DEFAULT_PADDING_PROPS);
     let axisProps = Object.assign({}, DEFAULT_AXIS_PROPS);
+    let legendTitle = DEFAULT_LEGEND_TITLE;
+    let legendCells = DEFAULT_LEGEND_CELLS;
     let xAccessor = DEFAULT_X_ACCESSOR;
     let yAccessor = DEFAULT_Y_ACCESSOR;
     let xDomain = DEFAULT_X_DOMAIN;
@@ -761,6 +765,9 @@
 
       // Render the axis container. Do not clip.
       const axisContainer = renderContainer(svg, props, 'axis-content');
+
+      // Render the lagend container. Do not clip.
+      const legendContainer = renderContainer(svg, props, 'legend-content');
     }
 
     /**
@@ -885,8 +892,27 @@
         });
     }
 
-    function renderLegend(svg, scales) {
+    function renderLegend(svg, props, scales) {
+      if (!smallMultiple) {
+        const container = svg.select('.legend-content')
+        const legend = d3
+          .legendColor()
+          .cells(legendCells)
+          .title(legendTitle)
+          .titleWidth(props.margin.right - 7)
+          .scale(scales.key);
 
+        let update = container
+          .selectAll('.legend')
+          .data([legend]);
+        update.exit().remove();
+        update = update
+          .enter()
+          .append('g')
+          .attr('class', 'legend')
+          .attr('transform', `translate(${props.chartWidth + 7}, 7)`)
+          .each(function (d) { d3.select(this).call(d); });
+      }
     }
 
     /**
@@ -1031,7 +1057,7 @@
       // Render the save button.
       let saveBtn = d3.select('body')
         .selectAll('.btn.btn-save')
-        .data(changed ? [getOffset(svgEl)] : []);
+        .data([getOffset(svgEl)]);
       saveBtn.exit().remove();
       saveBtn = saveBtn
         .enter()
@@ -1039,8 +1065,9 @@
           .attr('class', 'btn btn-primary btn-save')
           .on('touchend', _.partial(onSaveClick, svg))
         .merge(saveBtn)
+          .classed('disabled', !changed)
           .style('position', 'absolute')
-          .style('top', d => `1rem`)
+          .style('top', d => `calc(${d.top + d.height}px - 5rem)`)
           .style('left', d => `calc(${d.left + d.width}px - 5rem)`)
           .text('Save');
 
@@ -1565,14 +1592,15 @@
 
     function onSaveClick(svg) {
       const svgEl = svg.node();
-      const curve = localCurve.get(svgEl);
-      const points = localPoints.get(svgEl);
-      localChanged.set(svgEl, false);
-      setTimeout(() => { renderOverlay(svg); }, 250);
-
-      const curveInverse = getInverse(svgEl, curve);
-      const pointsInverse = getInverse(svgEl, points);
-      dispatch.call('sketchSave', svgEl, curveInverse, pointsInverse);
+      if (localChanged.get(svgEl)) {
+        const curve = localCurve.get(svgEl);
+        const points = localPoints.get(svgEl);
+        localChanged.set(svgEl, false);
+        setTimeout(() => { renderOverlay(svg); }, 250);
+        const curveInverse = getInverse(svgEl, curve);
+        const pointsInverse = getInverse(svgEl, points);
+        dispatch.call('sketchSave', svgEl, curveInverse, pointsInverse);
+      }
     }
 
     function onCurvePress(svg, point) {
@@ -1704,9 +1732,14 @@
     function onBoundRelease(svg, point) {
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
+      const points = localPoints.get(svgEl);
       const anchor = point.index === 0 ? curve[0] : curve[curve.length - 1];
       anchor.selected = false;
       renderOverlay(svg);
+
+      const curveInverse = getInverse(svgEl, curve);
+      const pointsInverse = getInverse(svgEl, points);
+      dispatch.call('change', svgEl, curveInverse, pointsInverse);
     }
 
     function onOtherPress(svg, point) {
@@ -2010,6 +2043,38 @@
         return timeline;
       }
       return seriesDataAccessor;
+    };
+
+    /**
+     * If t is sepcified, set the legend title to the given string and return this timeline. Otherwise, return the
+     * current title.
+     * @param {string|null|undefined} t The title. If null, the title is set to its default value, which is 'Series'.
+     */
+    timeline.legendTitle = function(t) {
+      if (t === null) {
+        legendTitle = DEFAULT_LEGEND_TITLE;
+        return timeline;
+      } else if (t !== undefined) {
+        legendTitle = t;
+        return timeline;
+      }
+      return legendTitle;
+    };
+
+    /**
+     * If c is sepcified, set the legend cell count to the given number and return this timeline. Otherwise, return the
+     * current cell count.
+     * @param {number|null|undefined} c The cell count. If null, the title is set to its default value, which is 5.
+     */
+    timeline.legendCells = function(c) {
+      if (c === null) {
+        legendCells = DEFAULT_LEGEND_CELLS;
+        return timeline;
+      } else if (c !== undefined) {
+        legendCells = c;
+        return timeline;
+      }
+      return legendCells;
     };
 
     /**
