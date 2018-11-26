@@ -139,6 +139,9 @@
   }
 
   function getDistance(curve, sketch) {
+    console.log('GET DISTANCE:', curve, sketch);
+
+
     return (new DynamicTimeWarping(curve, sketch, distFunc)
       .getDistance()/ curve.length) <= 400; //arbitrary threshold 
   }
