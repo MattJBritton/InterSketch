@@ -1,6 +1,7 @@
 // TODO: Add implicit start and end control points
-// TODO: Click elsewhere to close menu
+// TODO: Better padding.
 (function(global, d3, _) {
+  const DEFAULT_EDITABLE = true;
   const DEFAULT_X_ACCESSOR = d => d.x;
   const DEFAULT_Y_ACCESSOR = d => d.y;
   const DEFAULT_X_DOMAIN = [undefined, undefined];
@@ -11,6 +12,12 @@
   const DEFAULT_MATCH_ACCESSOR = d => d.match;
   const DEFAULT_CURVE = d3.curveLinear;
   const DEFAULT_MARGIN_PROPS = {
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  };
+  const DEFAULT_PADDING_PROPS = {
     top: 0,
     right: 0,
     bottom: 0,
@@ -29,8 +36,10 @@
     value: undefined,
   };
   const DOUBLE_TAP_INTERVAL = 350;
-  const PRESS_INTERVAL = 200;
-  const DELTA_DISTANCE = 10;
+  const PRESS_INTERVAL = 250;
+  const PINCH_BUFFER = 50;
+  const MOVE_DELTA = 10;
+  const SCALE_DELTA = 0.1;
   const CURVE_DISTANCE = 20;
   const POINT_DISTANCE = 20;
 
@@ -262,9 +271,11 @@
    * Find the nearest point on the path. Adapted from https://gist.github.com/mbostock/8027637.
    * @param {SVGPathElement} pathEl The SVG path element.
    * @param {array<number>} point The source point.
-   * @param {number} precision The precision at which to scan. Default is about 1px.
+   * @param {null|'x'|'y'} [restrict=null] If true, searching will be limited along the x axis.
+   * @param {number} [precision=8] The precision at which to scan. Default is about 1px.
+   
    */
-  function closestPathPoint(pathEl, point, precision = 8) {
+  function closestPathPoint(pathEl, point, restrict = null, precision = 8) {
     if (!pathEl) return null;
 
     let best;
@@ -273,8 +284,8 @@
     const pathLength = pathEl.getTotalLength();
 
     function distanceTo(p) {
-      const dx = p.x - point[0];
-      const dy = p.y - point[1];
+      const dx = restrict === 'y' ? 0 : p.x - point[0];
+      const dy = restrict === 'x' ? 0 : p.y - point[1];
       return dx * dx + dy * dy;
     }
 
@@ -437,6 +448,37 @@
     }
     return extent;
   }
+  
+  /**
+   * Convert a property descriptor for padding or margins into an object with numberical values. Supports percentages.
+   * @param {object} props The properties object.
+   * @param {number} width The chart width.
+   * @param {number} height The chart height.
+   */
+  function toGeomProps(props, width, height) {
+    const newProps = {};
+    Object.keys(props).forEach(key => {
+      const value = props[key];
+      if (_.isString(value)) {
+        const pct = parseFloat(value.split('%')[0]) / 100;
+        switch (key) {
+          case 'top':
+          case 'bottom':
+            newProps[key] = pct * height;
+            break;
+          case 'right':
+          case 'left':
+            newProps[key] = pct * width;
+            break;
+          default:
+            break;
+        }
+      } else {
+        newProps[key] = value;
+      }
+    });
+    return newProps;
+  }
 
   /**
    * If the local variable exists, return the value. Otherwise, set the value to dfault and return dfault.
@@ -457,7 +499,9 @@
    * Create a new timeline generator.
    */
   global.timeline = function() {
+    let editable = DEFAULT_EDITABLE;
     let marginProps = Object.assign({}, DEFAULT_MARGIN_PROPS);
+    let paddingProps = Object.assign({}, DEFAULT_PADDING_PROPS);
     let axisProps = Object.assign({}, DEFAULT_AXIS_PROPS);
     let xAccessor = DEFAULT_X_ACCESSOR;
     let yAccessor = DEFAULT_Y_ACCESSOR;
@@ -488,11 +532,6 @@
 
     function timeline(svgSelection) {
       svgSelection.each(function(data) {
-        // Set the chart ID.
-        if (localId.get(this) === undefined) { localId.set(this, _.uniqueId('timeline')); }
-        //if (localCurve.get(this) === undefined) { localCurve.set(this, []); }
-        if (localPoints.get(this) === undefined) { localPoints.set(this, []); }
-
         // Calculate chart properties.
         const svg = d3.select(this);
         const props = getProps(svg);
@@ -502,7 +541,11 @@
         // Persist the props and scales locally.
         localProps.set(this, props);
         localScales.set(this, scales);
-        localCurve.set(this, getPoints(svg, data.sketch));
+
+        // Set the chart and other properties that need initialization only once.
+        if (localId.get(this) === undefined) { localId.set(this, _.uniqueId('timeline')); }
+        if (localCurve.get(this) === undefined) { localCurve.set(this, getPoints(svg, data.sketch)); }
+        if (localPoints.get(this) === undefined) { localPoints.set(this, []); }
 
         // Render the chart skeleton.
         renderChart(svg, props);
@@ -527,20 +570,20 @@
         height,
         chartWidth,
         chartHeight,
-        margin: marginProps,
+        margin: toGeomProps(marginProps, chartWidth, chartHeight),
+        padding: toGeomProps(paddingProps, chartWidth, chartHeight),
       };
     }
 
     function getScales(data, props) {
       const xExtent = mergeExtent(data.series, seriesDataAccessor, xAccessor, xDomain);
       const yExtent = mergeExtent(data.series, seriesDataAccessor, yAccessor, yDomain);
-
       const keys = data.series.map(seriesKeyAccessor);
       const keyType = commonType(keys);
       const keyExtent = keyType === 'number' ? d3.extent(keys) : domain(keys);
 
-      const xRange = [0, props.chartWidth];
-      const yRange = [props.chartHeight, 0];  
+      const xRange = [props.padding.left, props.chartWidth - props.padding.right];
+      const yRange = [props.chartHeight - props.padding.bottom, props.padding.top];  
 
       return {
         x: d3.scaleLinear().domain(xExtent).range(xRange),
@@ -582,14 +625,12 @@
     }
 
     /**
-     * Convert the given data into the point space.
+     * Convert the given data into the chart space.
      * @param {object} svg The SVG selection
      * @param {array<array<number>>} points The points to transform
      */
     function getPoints(svg, data) {
-
       if(data === undefined || data == []) {
-
         return [];
       } else {
         const {
@@ -784,6 +825,10 @@
           .attr('d', d => d);
     }
 
+    /**
+     * Render the points on the curve.
+     * @param {object} svg The SVG selection.
+     */
     function renderPoints(svg) {
       const points = localPoints.get(svg.node());
       const container = svg.select('.point-content');
@@ -852,7 +897,7 @@
           .attr('y1', props.margin.top)
           .attr('y2', props.chartHeight + props.margin.top)
           .attr('stroke', 'white')
-          .attr('stroke-width', 2);
+          .attr('stroke-width', 4);
 
       // Render the save button.
       let saveBtn = d3.select('body')
@@ -874,7 +919,9 @@
     }
 
     function renderMenus(svg) {
+      const svgEl = svg.node();
       const menu = contextMenu();
+      const points = localPoints.get(svgEl);
       svg
         .selectAll('.point')
         .filter(d => d.menu)
@@ -882,6 +929,14 @@
       menu
         .on('change', _.partial(onMenuChange, svg))
         .on('remove', _.partial(onMenuRemove, svg));
+
+      // Add a global event listener that closes the menu.
+      if (points.some(p => p.menu)) {
+        window.addEventListener('touchstart', () => {
+          points.forEach(p => p.menu = false);
+          renderMenus(svg);
+        });
+      }
     }
 
     function initOverlayTouch(svg) {
@@ -896,7 +951,9 @@
         first,
         map,
         mergeMap,
+        pairwise,
         share,
+        startWith,
         takeUntil,
         tap,
       } = rxjs.operators;
@@ -922,6 +979,7 @@
 
       // Single finger taps.
       const tap$ = touchStream(this, 'touchstart', 1).pipe(
+        filter(() => !!editable),
         concatMap(touches => {
           const initPoint = touchPoint(containerEl, touches);
           const touchIds = touches.map(t => t.identifier);
@@ -930,7 +988,7 @@
             filterTouches(touchIds),
             map(touches => touchPoint(containerEl, touches)),
             map(point => distanceTo(point, initPoint)),
-            filter(dist => dist > DELTA_DISTANCE)
+            filter(dist => dist > MOVE_DELTA)
           );
           // Emit events that end the touch.
           const touchend$ = merge(
@@ -962,8 +1020,10 @@
 
       // Presses.
       const press$ = fromEvent(this, 'touchstart').pipe(
+        filter(() => !!editable),
         tap(preventDefault),
         map(evt => toTouchArray(evt.changedTouches)),
+        filter(touches => touches.length === 1),
         concatMap(touches => {
           const initPoint = touchPoint(containerEl, touches);
           const touchIds = touches.map(t => t.identifier);
@@ -972,15 +1032,17 @@
             filterTouches(touchIds),
             map(touches => touchPoint(containerEl, touches)),
             map(point => distanceTo(point, initPoint)),
-            filter(dist => dist > DELTA_DISTANCE)
+            filter(dist => dist > MOVE_DELTA)
           );
           // Emit events that end the touch.
           const touchend$ = merge(
             fromEvent(this, 'touchend'),
             fromEvent(this, 'touchcancel')
           ).pipe(filterTouches(touchIds));
-          // Emit an event after a timeout, unless it is interrupted by movement or an event ending the touch.
+          // Emit an event after a timeout, unless it is a pinch event, interrupted by movement, or interrupted by an
+          // event ending the touch.
           return timer(PRESS_INTERVAL).pipe(
+            takeUntil(pinch$),
             takeUntil(touchdelta$),
             takeUntil(touchend$),
             map(() => touchPoint(containerEl, touches)),
@@ -1046,6 +1108,7 @@
           return touchmove$.pipe(
             takeUntil(touchend$),
             map(touches => [point, touchPoint(containerEl, touches)]),
+            filter(([oldPoint, newPoint]) => distanceTo(oldPoint, newPoint) > MOVE_DELTA),
             catchError(err => empty())
           );
         })
@@ -1080,6 +1143,7 @@
           return touchmove$.pipe(
             takeUntil(touchend$),
             map(touches => [point, touchPoint(containerEl, touches)]),
+            filter(([oldPoint, newPoint]) => distanceTo(oldPoint, newPoint) > MOVE_DELTA),
             catchError(err => empty())
           );
         })
@@ -1119,8 +1183,13 @@
 
       // Sketch start events.
       const sketch$ = fromEvent(this, 'touchstart').pipe(
+        filter(() => !!editable),
         tap(preventDefault),
         map(evt => toTouchArray(evt.changedTouches)),
+        filter((touches) => {
+          const selected = localPoints.get(svgEl).filter(d => d.selected);
+          return touches.length === 1 || selected.length === 1;
+        }),
         concatMap(touches => {
           const initPoint = touchPoint(containerEl, touches);
           const touchIds = touches.map(t => t.identifier);
@@ -1130,16 +1199,17 @@
           const touchdelta$ = touchmove$.pipe(
             map(touches => touchPoint(containerEl, touches)),
             map(point => distanceTo(point, initPoint)),
-            filter(dist => dist > DELTA_DISTANCE)
+            filter(dist => dist > MOVE_DELTA)
           );
           // Emit events that end the touch.
           const touchend$ = merge(
             fromEvent(this, 'touchend'),
             fromEvent(this, 'touchcancel')
           ).pipe(filterTouches(touchIds));
-          // Buffer touch movement until significant movement occurs uninterrupted by an event ending the touch or by
-          // the timer for a press. Release the buffer as a cluster of touches to start the sketch.
+          // Buffer touch movement until significant movement occurs uninterrupted by a pinch event, an event ending
+          // the touch, or by the timer for a press. Release the buffer as a cluster of touches to start the sketch.
           return touchmove$.pipe(
+            takeUntil(pinch$),
             takeUntil(touchend$),
             takeUntil(timer(PRESS_INTERVAL)),
             buffer(touchdelta$),
@@ -1184,40 +1254,69 @@
         })
       ).subscribe(_.partial(onSketchEnd, svg));
 
-      // Two finger events:
-      // 1. Press and {sketch, move}
-      // 2. Pinch and zoom
+      // Pinch. A pinch is two touches within quick succession.
+      const pinch$ = fromEvent(this, 'touchstart').pipe(
+        filter(() => !!editable),
+        tap(preventDefault),
+        map(evt => toTouchArray(evt.changedTouches)),
+        clusterTime(PINCH_BUFFER),
+        map(touches => _.uniqBy(_.flatten(touches), t => t.identifier)),
+        filter(touches => touches.length === 2),
+        share()
+      );
 
-      // const pressmove
-
-      // const sketch$ = pressstart$.pipe(
-      //   concatMap(touches => {
-      //     const touchIds = touches.map(t => t.identifier);
-      //     const touchmove$ = fromEvent(this, 'touchmove')
-      //       .pipe(filterTouches(touchIds));
-      //     const touchend$ = merge(
-      //       fromEvent(this, 'touchend'),
-      //       fromEvent(this, 'touchcancel')
-      //     ).pipe(filterTouches(touchIds));
-      //     return touchmove$.pipe(
-      //       takeUntil(touchend$),
-      //       takeUntil(timer(PRESS_INTERVAL)),
-      //       bufferCount(3),
-      //       first(),
-      //       catchError(err => empty())
-      //     );
-      //   })
-      // );
-
+      // onZoomStart and onZoom events.
+      pinch$.pipe(
+        tap(_.partial(onZoomStart, svg)),
+        concatMap(touches => {
+          const touchIds = touches.map(t => t.identifier);
+          const touchmove$ = fromEvent(this, 'touchmove')
+            .pipe(filterTouches(touchIds));
+          const touchend$ = merge(
+            fromEvent(this, 'touchend'),
+            fromEvent(this, 'touchcancel')
+          ).pipe(filterTouches(touchIds));
+          return touchmove$.pipe(
+            startWith(touches),
+            takeUntil(touchend$),
+            catchError(err => empty()),
+            map(touches => touches.map(t => touchPoint(containerEl, [t]))),
+            pairwise(),
+          );
+        })
+      ).subscribe(([prevPoints, nextPoints]) => onZoom(svg, prevPoints, nextPoints));
     }
 
     function onSketchStart(svg, head) {
       const svgEl = svg.node();
       const containerEl = svg.select('.sketch-content').node();
-      const points = head.map(touches => touchPoint(containerEl, touches));
-      const curve = points; // TODO: Handle sketching of partial segments.
+      const selected = localPoints.get(svgEl).filter(d => d.selected);
+      const start = head.map(touches => touchPoint(containerEl, touches));
+
+      let curve = [];
+      let points = [];
+      if (selected.length === 1) {
+        // Anchor and resketch.
+        const anchor = selected[0];
+        const oldCurve = localCurve.get(svgEl);
+        const oldPoints = localPoints.get(svgEl);
+        if (head[0][0] < anchor) {
+          // TODO: Fix this case.
+          const pointA = anchor;
+          const pointB = oldCurve[oldCurve.length - 1];
+          curve = sliceBetween(oldCurve, pointA, pointB)[1];
+          points = sliceBetween(oldPoints, pointA, pointB)[1];
+        } else {
+          const pointA = oldCurve[0];
+          const pointB = anchor;
+          curve = sliceBetween(oldCurve, pointA, pointB)[1];
+          points = sliceBetween(oldPoints, pointA, pointB)[1];
+        }
+      }
+
+      curve = curve.concat(start);
       localCurve.set(svgEl, curve);
-      localPoints.set(svgEl, []);
+      localPoints.set(svgEl, points);
       localSketching.set(svgEl, true);
       localChanged.set(svgEl, true);
       renderSketch(svg);
@@ -1281,8 +1380,8 @@
       const selected = points.filter(d => d.selected);
 
       if (selected.length === 2) {
+        // Stretch/trunctate
         const curve = localCurve.get(svgEl);
-        
         const anchor = selected.reduce((a, p) => p !== point ? p : a, [0, 0]);
         const oldDist = point[0] - anchor[0];
         const newDist = touchPoint[0] - anchor[0];
@@ -1317,9 +1416,9 @@
         renderSketch(svg);
         renderPoints(svg);
       } else {
-        // Move the point by finding the closest point on the curve.
+        // Move the point by finding the closest point on the curve, restricting to the x axis.
         const sketchEl = svg.select('.series.visible').node();
-        const closest = closestPathPoint(sketchEl, touchPoint);
+        const closest = closestPathPoint(sketchEl, touchPoint, 'x');
         point[0] = closest[0];
         point[1] = closest[1];
         renderPoints(svg);
@@ -1360,6 +1459,18 @@
     function onOtherRelease(svg, point) {
     }
 
+    function onZoomStart(svg, head) {
+
+    }
+
+    function onZoom(svg, prevPoints, nextPoints) {
+      // Determine the scale.
+      const prevDist = distanceTo(prevPoints[0], prevPoints[1]);
+      const nextDist = distanceTo(nextPoints[0], nextPoints[1]);
+      const scale = lastDist / initDist;
+      // Convert the latest points into a vector.
+    }
+
     function onMenuChange(svg, point, option) {
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
@@ -1394,6 +1505,23 @@
     }
 
     /**
+     * If e is specified and true, make the chart editable and return this timeline. Otherwise, return the current
+     * editable state.
+     * @param {boolean|null|undefined} e True if the chart should be editable. If null, the editable state is set to
+     * its default value, which is true.
+     */
+    timeline.editable = function(e) {
+      if (e === null) {
+        editable = Object.assign({}, DEFAULT_EDITABLE);
+        return timeline;
+      } else if (e !== undefined) {
+        editable = e;
+        return timeline;
+      }
+      return editable;
+    }
+
+    /**
      * If m is specified, set the margins object and return this timeline. Otherwise, return the current margins.
      * @param {object|null|undefined} m The margins object. If null, the margins are set to their default values, which
      * are { top: 0, right: 0, bottom: 0, left: 0 }.
@@ -1415,6 +1543,30 @@
         return timeline;
       }
       return marginProps;
+    };
+
+    /**
+     * If p is specified, set the padding object and return this timeline. Otherwise, return the current padding.
+     * @param {object|null|undefined} p The padding object. If null, the padding is set to its default values, which
+     * are { top: 0, right: 0, bottom: 0, left: 0 }.
+     */
+    timeline.padding = function (p) {
+      if (p === null) {
+        paddingProps = Object.assign({}, DEFAULT_PADDING_PROPS);
+        return timeline;
+      } else if (_.isNumber(p) || _.isString(p)) {
+        paddingProps = {
+          top: p,
+          right: p,
+          bottom: p,
+          left: p,
+        };
+        return timeline;
+      } else if (typeof p === 'object') {
+        paddingProps = Object.assign({}, DEFAULT_PADDING_PROPS, p);
+        return timeline;
+      }
+      return paddingProps;
     };
 
     /**

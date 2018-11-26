@@ -147,7 +147,7 @@ function add_timeline(series, sketch) {
       'sketch': sketch,
       'timeline': build_timeline(),
       'svg': div.append("svg")
-        .attr("width", 800)
+        .attr("width", '85%')
         .attr("id", "svg_"+loaded_data.length-1)
         .style("top", (loaded_data.length-1)*220)
     })
@@ -159,6 +159,7 @@ function build_timeline() {
   const now = moment();
   const new_timeline = timeline()
     .margin({ top: 10, right: 10, left: 30, bottom: 30 })
+    .padding({ top: 2 })
     .axis({ bottom: true, left: true })
     .curve(d3.curveMonotoneX)
     .x(d => d.x)

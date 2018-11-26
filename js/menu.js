@@ -48,7 +48,8 @@
               .enter()
               .append('button')
                 .attr('class', 'dropdown-item type-item')
-                .on('click', onTypeClick.bind(this, point))
+                .on('touchstart', () => { d3.event.stopPropagation(); })
+                .on('touchend', onTypeClick.bind(this, point))
               .merge(item)
                 .classed('active', d => d.value === point.type.value)
                 .html((d) => {
@@ -65,7 +66,8 @@
               .enter()
               .append('button')
                 .attr('class', 'dropdown-item action-item')
-                .on('click', onActionClick.bind(this, point))
+                .on('touchstart', () => { d3.event.stopPropagation(); })
+                .on('touchend', onActionClick.bind(this, point))
               .merge(item)
                 .html((d) => {
                   return (
