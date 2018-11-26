@@ -43,6 +43,7 @@
   const SCALE_DELTA = 0.1;
   const CURVE_DISTANCE = 20;
   const POINT_DISTANCE = 20;
+  const BOUND_DISTANCE = 20;
 
 
   /**
@@ -277,7 +278,7 @@
   function distanceTo(pointA, pointB) {
     const dx = pointB[0] - pointA[0];
     const dy = pointB[1] - pointA[1];
-    return dx * dx + dy * dy;
+    return Math.sqrt(dx * dx + dy * dy);
   }
 
   /**
@@ -301,7 +302,7 @@
       }
     }
     if (best) {
-      best.distance = Math.sqrt(bestDist);
+      best.distance = bestDist;
       return best;
     }
     return null;
@@ -315,7 +316,7 @@
    * @param {number} [precision=8] The precision at which to scan. Default is about 1px.
    
    */
-  function closestPathPoint(pathEl, point, restrict = null, precision = 8) {
+  function closestPathPoint(pathEl, point, restrict=null, precision=8) {
     if (!pathEl) return null;
 
     let best;
@@ -366,6 +367,26 @@
     best = [best.x, best.y];
     best.distance = Math.sqrt(bestDistance);
     return best;
+  }
+
+  /**
+   * Find the nearest point on the line. Adapted from http://jsfiddle.net/soulwire/UA6H5/.
+   * @param {SVGLineElement} lineEl The SVG line element.
+   * @param {array<number>} point The source point.
+   * @param {'x'|'y'} orient The orientation of the line.
+   */
+  function closestLinePoint(lineEl, point) {
+    const a = { x: lineEl.x1.animVal.value, y: lineEl.y1.animVal.value };
+    const b = { x: lineEl.x2.animVal.value, y: lineEl.y2.animVal.value };
+    const p = { x: point[0], y: point[1] };
+    const atob = { x: b.x - a.x, y: b.y - a.y };
+    const atop = { x: p.x - a.x, y: p.y - a.y };
+    const len = atob.x * atob.x + atob.y * atob.y;
+    const dot = atop.x * atob.x + atop.y * atob.y;
+    const t = Math.min(1, Math.max(0, dot / len));
+    const closest = [a.x + atob.x * t, a.y + atob.y * t];
+    closest.distance = distanceTo(closest, point);
+    return closest;
   }
 
   /**
@@ -610,6 +631,7 @@
         // Render the chart skeleton.
         renderChart(svg, props);
         renderAxes(svg, props, axes);
+        renderLegend(svg, props, scales);
 
         // Render the chart content.
         renderSeries(svg, props, scales, data);
@@ -664,16 +686,16 @@
     function getAxes(scales) {
       const axes = [];
       if (axisProps.top) {
-        axes.push({ cls:'top', axis: d3.axisTop(scales.x) });
+        axes.push({ cls: 'top', axis: d3.axisTop(scales.x), label: axisProps.top });
       }
       if (axisProps.right) {
-        axes.push({ cls:'right', axis: d3.axisRight(scales.y) });
+        axes.push({ cls: 'right', axis: d3.axisRight(scales.y), label: axisProps.right });
       }
       if (axisProps.bottom) {
-        axes.push({ cls:'bottom', axis: d3.axisBottom(scales.x) });
+        axes.push({ cls: 'bottom', axis: d3.axisBottom(scales.x), label: axisProps.bottom });
       }
       if (axisProps.left) {
-        axes.push({ cls:'left', axis: d3.axisLeft(scales.y) });
+        axes.push({ cls: 'left', axis: d3.axisLeft(scales.y), label: axisProps.left });
       }
       return axes;
     }
@@ -807,10 +829,11 @@
      */
     function renderAxes(svg, props, axes) {
       const container = svg.select('.axis-content');
-      const update = container
+      let update = container
         .selectAll('.axis')
         .data(axes);
-      const enter = update
+      const exit = update.exit().remove();
+      update = update
         .enter()
         .append('g')
           .attr('class', d => `axis ${d.cls}`)
@@ -821,13 +844,49 @@
               return `translate(0, ${props.chartHeight})`;
             }
             return `translate(0,0)`;
-          });
-      const exit = update
-        .exit()
-        .remove();
-      enter
+          })
         .merge(update)
-        .each(function(d) { d3.select(this).call(d.axis); });
+          .each(function(d) { d3.select(this).call(d.axis); });
+
+      // Follow Mike Bostock's latest axis labeling convention, but keep the domain lines to guide users to the
+      // sketchable area.
+      container
+        .selectAll('.axis.left')
+        .call(g => {
+          let label = g.selectAll('.tick:last-of-type text');
+          label = label.size() === 1
+            ? label.clone()
+            : d3.select(label.nodes()[1]);
+          label
+            .attr("x", 3)
+            .attr("text-anchor", "start")
+            .attr("font-weight", "bold")
+            .text(g.datum().label);
+        });
+
+      container
+        .selectAll('.axis.bottom')
+        // .call(g => g.select(".domain").remove())
+        .call(g => {
+          const label = g
+            .selectAll('.text.label')
+            .data(d => [d.label]);
+          label
+            .enter()
+            .append('text')
+              .attr('class', 'text label')
+              .attr("y", -4)
+              .attr("fill", "#000")
+              .attr("font-weight", "bold")
+              .attr("text-anchor", "end")
+            .merge(label)
+              .attr("x", props.chartWidth)
+              .text(d => d);
+        });
+    }
+
+    function renderLegend(svg, scales) {
+
     }
 
     /**
@@ -951,8 +1010,8 @@
           .attr('height', props.height)
           .attr('opacity', 0.001);
 
-      // TODO: Move this to another function?
-      let boundary = overlay
+      // The boundary is rendered into the point-content layer to keep it in the chart coordinates.
+      let boundary = svg.select('.point-content')
         .selectAll('.bound')
         .data(curve.length ? [curve[0], curve[curve.length - 1]] : []);
       boundary.exit().remove();
@@ -961,12 +1020,12 @@
         .append('line')
           .attr('class', 'bound')
         .merge(boundary)
-          .attr('x1', d => d[0] + props.margin.left)
-          .attr('x2', d => d[0] + props.margin.left)
-          .attr('y1', props.margin.top)
-          .attr('y2', props.chartHeight + props.margin.top)
+          .attr('x1', d => d[0])
+          .attr('x2', d => d[0])
+          .attr('y1', 0)
+          .attr('y2', props.chartHeight)
           .attr('stroke', 'gray')
-          .attr('stroke-width', 2)
+          .attr('stroke-width', d => d.selected ? 4 : 2)
           .attr('stroke-dasharray', 4);
 
       // Render the save button.
@@ -981,7 +1040,7 @@
           .on('touchend', _.partial(onSaveClick, svg))
         .merge(saveBtn)
           .style('position', 'absolute')
-          .style('top', d => `calc(${d.top + d.height}px - 5rem)`)
+          .style('top', d => `1rem`)
           .style('left', d => `calc(${d.left + d.width}px - 5rem)`)
           .text('Save');
 
@@ -1141,6 +1200,21 @@
             closest.touches = point.touches;
             return closest;
           }
+
+          let boundEl;
+          let i = -1;
+          const boundEls = svg.selectAll('.point-content .bound').nodes();
+          const n = boundEls.length;
+          while (++i < n) {
+            boundEl = boundEls[i];
+            closest = closestLinePoint(boundEl, point);
+            if (closest && closest.distance <= BOUND_DISTANCE) {
+              closest._type = 'bound';
+              closest.touches = point.touches;
+              closest.index = i;
+              return closest;
+            }
+          }
           point._type = 'other';
           return point;
         }),
@@ -1156,6 +1230,11 @@
         tap(p => delete p._type),
         share()
       );
+      boundPress$ = picked$.pipe(
+        filter(p => p._type === 'bound'),
+        tap(p => delete p._type),
+        share()
+      );
       otherPress$ = picked$.pipe(
         filter(p => p._type === 'other'),
         tap(p => delete p._type),
@@ -1164,6 +1243,7 @@
 
       pointPress$.subscribe(_.partial(onPointPress, svg));
       curvePress$.subscribe(closest => onCurvePress(svg, closest, false));
+      boundPress$.subscribe(_.partial(onBoundPress, svg));
       otherPress$.subscribe(_.partial(onOtherPress, svg));
 
       // onPointMove
@@ -1235,6 +1315,44 @@
           );
         })
       ).subscribe(_.partial(onCurveRelease, svg));
+
+      // onBoundMove
+      boundPress$.pipe(
+        mergeMap(point => {
+          const touchIds = point.touches.map(t => t.identifier);
+          const touchmove$ = fromEvent(this, 'touchmove')
+            .pipe(filterTouches(touchIds));
+          const touchend$ = merge(
+            fromEvent(this, 'touchend'),
+            fromEvent(this, 'touchcancel')
+          ).pipe(filterTouches(touchIds));
+          return touchmove$.pipe(
+            startWith(point.touches),
+            takeUntil(touchend$),
+            map(touches => touchPoint(containerEl, touches)),
+            filter((newPoint) => distanceTo(point, newPoint) > MOVE_DELTA),
+            pairwise(),
+            map(([prevPoint, nextPoint]) => [point, prevPoint, nextPoint]),
+            catchError(err => empty())
+          );
+        })
+      ).subscribe(([initPoint, prevPoint, nextPoint]) => onBoundMove(svg, initPoint, prevPoint, nextPoint));
+
+      // onBoundRelease
+      boundPress$.pipe(
+        mergeMap(point => {
+          const touchIds = point.touches.map(t => t.identifier);
+          return merge(
+            fromEvent(this, 'touchend'),
+            fromEvent(this, 'touchcancel')
+          ).pipe(
+            filterTouches(touchIds),
+            first(),
+            map(() => point),
+            catchError(err => empty())
+          );
+        })
+      ).subscribe(_.partial(onBoundRelease, svg));
 
       // onOtherRelease
       otherPress$.pipe(
@@ -1404,7 +1522,6 @@
       localCurve.set(svgEl, curve);
       localPoints.set(svgEl, points);
       localSketching.set(svgEl, true);
-      localChanged.set(svgEl, true);
       renderSketch(svg);
       renderOverlay(svg);
       renderPoints(svg);
@@ -1436,6 +1553,7 @@
       const curve = localCurve.get(svgEl);
       const points = localPoints.get(svgEl);
       localSketching.set(svgEl, false);
+      localChanged.set(svgEl, true);
       // TODO: Post-processing of curve?
       renderOverlay(svg);
 
@@ -1553,6 +1671,42 @@
     function onPointDoubletap(svg, point) {
       point.menu = true;
       renderMenus(svg);
+    }
+
+    function onBoundPress(svg, point) {
+      const svgEl = svg.node();
+      const curve = localCurve.get(svgEl);
+      const anchor = point.index === 0 ? curve[0] : curve[curve.length - 1];
+      anchor.selected = true;
+      renderOverlay(svg);
+    }
+
+    function onBoundMove(svg, initPoint, prevPoint, nextPoint) {
+      const svgEl = svg.node();
+      const curve = localCurve.get(svgEl);
+      const points = localPoints.get(svgEl);
+      const anchor = initPoint.index === 0 ? curve[0] : curve[curve.length - 1];
+      const deltaX = nextPoint[0] - anchor[0];
+      const deltaY = nextPoint[1] - prevPoint[1];
+      curve.forEach(d => { 
+        d[0] += deltaX;
+        d[1] += deltaY;
+      });
+      points.forEach(d => { 
+        d[0] += deltaX;
+        d[1] += deltaY;
+      });
+      renderSketch(svg);
+      renderPoints(svg);
+      renderOverlay(svg);
+    }
+
+    function onBoundRelease(svg, point) {
+      const svgEl = svg.node();
+      const curve = localCurve.get(svgEl);
+      const anchor = point.index === 0 ? curve[0] : curve[curve.length - 1];
+      anchor.selected = false;
+      renderOverlay(svg);
     }
 
     function onOtherPress(svg, point) {

@@ -139,9 +139,6 @@
   }
 
   function getDistance(curve, sketch) {
-    console.log('GET DISTANCE:', curve, sketch);
-
-
     return (new DynamicTimeWarping(curve, sketch, distFunc)
       .getDistance()/ curve.length) <= 400; //arbitrary threshold 
   }
@@ -174,9 +171,6 @@
           curve: inner.y,
           sketch: mapSketch[roundForDTW(inner.x)]
         }));
-
-      console.log(coords);
-
       if(getDistance(coords.map(d=> d.curve), coords.map(d => d.sketch))) {
 
         matches.push(outer.date);
@@ -244,7 +238,7 @@ function build_timeline(smallMultiple) {
   return timeline()
     .margin({ top: 10, right: 10, left: 30, bottom: 30 })
     .padding({ top: 2 })
-    .axis({ bottom: true, left: true })
+    .axis({ bottom: 'Hour of Day', left: 'Measurement' })
     .curve(d3.curveMonotoneX)
     .x(d => d.x)
     .y(d => d.y)
