@@ -7,6 +7,94 @@
   let div = d3.select("#timeline");
   let loaded_data = [];
 
+  let eventTypeDict = {
+    'Snack Bolus':"snack",
+    "Meal Bolus":"meal",
+    "Carb Correction": "carb_correction",
+    "Correction Bolus": "insulin_correction"
+  };
+
+  function load_event_data(events) {
+
+    return d3.nest()
+      .key(d => d.date)
+      .sortValues((a,b) => parseFloat(a.time) - parseFloat(b.time))
+      .entries(
+        events
+        .filter(d =>
+          d.hasOwnProperty('created_at') 
+          && d.hasOwnProperty('eventType')
+          && parseTime(d.created_at) >= startDate.getTime()
+          && parseTime(d.created_at) <= endDate.getTime())
+        .filter(d => Object.keys(eventTypeDict).includes(d.eventType))
+        .map(d => ({
+            date : moment.parseZone(mergeTimeFormat(d.created_at))
+              .startOf("day")._d,
+            time : extractTimeFromString(d.created_at),
+            eventType : eventTypeDict[d.eventType]
+          })
+        )
+      )    
+      .map(group => ({
+          date: group.key,
+          events: group.values.map(
+            d => ({x: d.time, eventType:d.eventType}))
+        })
+      )
+  }
+
+  function load_series_data(series, eventMap) {
+
+    return d3.nest()
+      .key(d => d.date)
+      .sortValues((a,b) => parseFloat(a.time) - parseFloat(b.time))
+      .entries(
+        series
+        .filter(d =>
+          d.hasOwnProperty('dateString') 
+          && d.hasOwnProperty('sgv')
+          && parseTime(d.dateString) >= startDate.getTime()
+          && parseTime(d.dateString) <= endDate.getTime())
+        .map(d => ({
+            date : moment.parseZone(mergeTimeFormat(d.dateString))
+              .startOf("day")._d,
+            time : extractTimeFromString(d.dateString),
+            value : +d.sgv    
+          })    
+        )
+      )
+      .map(group => ({
+          date: group.key,
+          curve: interpolate(group.values.map(
+            d => ({x: d.time, y:d.value}))),
+          events: eventMap[group.key]
+        })
+      //only return days that have close to a full 24 hours of data
+      ).filter( group => d3.min(group.curve, d=> d.x) <= 1
+        && d3.max(group.curve, d=> d.x) >= 23
+      ).map(group => ({
+          date: group.date,
+          curve: group.curve,
+          events: group.events,
+          //simple_curve: simplify(group.curve, .01, true)
+        })
+      )      
+  }
+
+  function parseTime(dateString) {
+
+    return strictIsoParse(mergeTimeFormat(dateString)).getTime();
+  }
+
+  function mergeTimeFormat(dateString) {
+
+    return dateString.replace(" ","T");
+  }
+
+  function extractTimeFromString(dateString) {
+    return +dateString.substring(11,13) + dateString.substring(14,16)/60;
+  }
+
   //function to find null y values that need to be interpolated
   function find_null_indices(d,i){
 
@@ -49,79 +137,57 @@
     return Math.round(d*10)/10.;
   }
 
-  function calculateDTW(sketch){
+  function getDistance(curve, sketch) {
+    return (new DynamicTimeWarping(curve, sketch, distFunc)
+      .getDistance()/ curve.length) <= 400; //arbitrary threshold 
+  }
 
-    mapDTW = {}
+  function calculateDTW(sketch, points){
+
+    var mapDTW = {}
+    var matches = [];
     //turn sketch into X:Y dict
-    mapSketch = {}
+    var mapSketch = {}
     sketch.forEach(d => mapSketch[roundForDTW(d[0])] = d[1]);
 
     //iterate through each curve and find points in the curve with the same X
     //DTW library needs exact pairs
-    Object.entries(loaded_data[0].series).forEach(outer => {
+    Object.values(loaded_data[0].series).forEach(outer => {
 
-      tempCoordinates = [];
-      tempSketchCoordinates = [];
-      key = outer[1].date;
-      value = outer[1];
+      const coords = outer.curve
+        .filter(inner => roundForDTW(inner.x) in mapSketch)
+        .map( inner => ({
+          curve: inner.y,
+          sketch: mapSketch[roundForDTW(inner.x)]
+        }));
 
-      value.curve.forEach(inner =>{
+      if(getDistance(coords.map(d=> d.curve), coords.map(d => d.sketch))) {
 
-        x = roundForDTW(inner.x);
-        if(x in mapSketch) {
-
-          tempCoordinates.push(inner.y);
-          tempSketchCoordinates.push(mapSketch[x]);
-        }
-      })
-
-      if(tempCoordinates.length >= 3) {
-
-        mapDTW[key] = {
-          'sketch': tempSketchCoordinates, 
-          'data' : tempCoordinates
-        };
+        matches.push(outer.date);
       }
-    })
-
-    //if no common points between sketch and data, return nothing
-    if(mapDTW.length < 3) {
-      return [];
-    }
-
-    matches = [];
-    //calculate DTW for each series
-    Object.entries(mapDTW).forEach(d=> {
-
-      key = d[0];
-      value = d[1];
-      var dist = new DynamicTimeWarping(
-                                      value['data'], 
-                                      value['sketch'], 
-                                      distFunc
-                                      ).getDistance();
-
-      //arbitrary treshold for now
-      if (dist/value['data'].length <= 400){
-
-        matches.push(key);
-      };
     })
 
     return matches;
   }
 
-function generate_cluster(sketch, bolCreateMultiple) {
+function generate_cluster(sketch, points, bolCreateMultiple) {
 
-  matches = calculateDTW(sketch);
+  var matches = calculateDTW(sketch, points);
 
   if(bolCreateMultiple && matches.length>0) {
 
-    add_timeline(loaded_data[0].series.filter(
-      d => matches.includes(d.date)), sketch);
+    add_timeline(
+      loaded_data[0].series.filter(
+        d => matches.includes(d.date)
+      ), 
+      sketch, 
+      points,
+      true);
 
-    loaded_data[0].series = loaded_data[0].series.filter(
-      d => !matches.includes(d.date))
+    loaded_data[0].series = 
+      loaded_data[0].series.filter(
+        d => !matches.includes(d.date)
+      )
 
     //reload main timeline
     call_timeline(0);
@@ -131,7 +197,7 @@ function generate_cluster(sketch, bolCreateMultiple) {
 
   } else {
 
-    loaded_data[0]["series"].forEach( d => {
+    loaded_data[0].series.forEach( d => {
 
       d.match = matches.includes(d.date);
     });
@@ -140,24 +206,26 @@ function generate_cluster(sketch, bolCreateMultiple) {
   }  
 }
 
-function add_timeline(series, sketch) {
+function add_timeline(series, sketch, points, smallMultiple) {
 
     loaded_data.push({
-      'series': series,
-      'sketch': sketch,
-      'timeline': build_timeline(),
-      'svg': div.append("svg")
+      series: series,
+      sketch: sketch,
+      points: points,
+      timeline: build_timeline(smallMultiple),
+      svg: div.append("svg")
         .attr("width", 800)
+        .attr("height", 300)
         .attr("id", "svg_"+loaded_data.length-1)
-        .style("top", (loaded_data.length-1)*220)
+        .style("top", (loaded_data.length-1)*320)
     })
 }
 
-function build_timeline() {
+function build_timeline(smallMultiple) {
 
   // Create the main timeline component.
   const now = moment();
-  const new_timeline = timeline()
+  return timeline()
     .margin({ top: 10, right: 10, left: 30, bottom: 30 })
     .axis({ bottom: true, left: true })
     .curve(d3.curveMonotoneX)
@@ -167,6 +235,7 @@ function build_timeline() {
     .yDomain([0, 400])
     .seriesKey(s => now.diff(moment(s.date), 'days'))
     .seriesData(s => s.curve)
+    .smallMultiple(smallMultiple)
     .on('sketchStart', (curve) => {
       //console.log('sketchStart:', curve);
     })
@@ -174,106 +243,55 @@ function build_timeline() {
       //console.log('sketch:', curve);
     })
     .on('sketchEnd', function(curve){
-      //console.log('sketchEnd', curve);
+      //console.log('sketchEnd', curve, points);
       loaded_data[0].sketch = curve;
-      generate_cluster(curve, false);
+      generate_cluster(curve, loaded_data[0].points, false);
     })
+    .on('pointsChange', function(points){
+      console.log('pointsChange', points);
+      loaded_data[0].points = points;
+      generate_cluster(loaded_data[0].sketch, points, false);
+    })    
     .on('sketchSave', function(curve, points){
       console.log('sketchSave', curve, points);
       loaded_data[0].sketch = [];
-      generate_cluster(curve, true);
+      loaded_data[0].points = [];
+      generate_cluster(curve, points, true);
     }); 
-
-    return new_timeline; 
 }  
 
   function call_timeline(timeline_num) {
 
-    loaded_data[timeline_num].svg
+    var data = loaded_data[timeline_num];
+
+    data.svg
       .datum({
-        series: loaded_data[timeline_num].series,
-        sketch: loaded_data[timeline_num].sketch,
+        series: data.series,
+        sketch: data.sketch,
+        points: data.points
       })
-      .call(loaded_data[timeline_num].timeline);  
+      .call(data.timeline);  
   }
 
-  //LOAD DATA
+  /****************
+  LOAD DATA
+  ****************/
   Promise.all([
     d3.json("static/treatments.json"),
     d3.json("static/entries.json")
   ])
   .then(([events, series]) => {
 
-    events_grouped = d3.nest()
-      .key(d => d.date)
-      .sortValues((a,b) => parseFloat(a.time) - parseFloat(b.time))
-      .entries(
-        events
-        .filter(d =>
-          d.hasOwnProperty('created_at') 
-          && d.hasOwnProperty('eventType')
-          && strictIsoParse(d.created_at.replace(" ","T")).getTime()
-            >= startDate.getTime()
-          && strictIsoParse(d.created_at.replace(" ","T")).getTime()
-            <= endDate.getTime())
-        .filter(d =>
-          (d.hasOwnProperty("insulin") && d.insulin != null) //ignore duplicate GCM readings in the treatment file
-          || (d.hasOwnProperty("carbs") && d.carbs != null)
-        )
-        .map(d => ({
-            date : moment.parseZone(d.created_at.replace(" ","T"))
-              .startOf("day")._d,
-            time : +d.created_at.substring(11,13) 
-              + d.created_at.substring(14,16)/60,
-            eventType : d.eventType  
-          })
-        )
-      )    
-      .map(group => ({
-          date: group.key,
-          events: group.values.map(
-            d => ({x: d.time, eventType:d.eventType}))
-        })
-      )
+    var events_grouped = load_event_data(events);
 
-    eventMap = {};
-    events_grouped.forEach(d => eventMap[d.date] = d.events );
+    var eventMap = {};
+    events_grouped.forEach(d => eventMap[d.date] = d.events);
 
-    return d3.nest()
-      .key(d => d.date)
-      .sortValues((a,b) => parseFloat(a.time) - parseFloat(b.time))
-      .entries(
-        series
-        .filter(d =>
-          d.hasOwnProperty('dateString') 
-          && d.hasOwnProperty('sgv')
-          && strictIsoParse(d.dateString.replace(" ","T")).getTime()
-            >= startDate.getTime()
-          && strictIsoParse(d.dateString.replace(" ","T")).getTime()
-            <= endDate.getTime())
-        .map(d => ({
-            date : moment.parseZone(d.dateString.replace(" ","T"))
-              .startOf("day")._d,
-            time : +d.dateString.substring(11,13) 
-              + d.dateString.substring(14,16)/60,
-            value : +d.sgv    
-          })    
-        )
-      )
-      .map(group => ({
-          date: group.key,
-          curve: interpolate(group.values.map(
-            d => ({x: d.time, y:d.value}))),
-          events: eventMap[group.key]
-        })
-      //only return days that have close to a full 24 hours of data
-      ).filter( group => d3.min(group.curve, d=> d.x) <= 1
-        && d3.max(group.curve, d=> d.x) >= 23
-      )
+    return load_series_data(series, eventMap);
   })    
   .then(series => {
 
-    add_timeline(series, []);
+    add_timeline(series, [], [], false);
 
     // Render the main timeline component.
     call_timeline(0);
