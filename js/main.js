@@ -129,7 +129,7 @@
 
   //distance function for DTW
   distFunc = function(a, b) {
-    return Math.pow(Math.abs(a-b), 2);
+    return Math.pow(a-b, 2);
     //return Math.abs(a-b);
   };
 
@@ -149,10 +149,21 @@
     var mapSketch = {}
     sketch.forEach(d => mapSketch[roundForDTW(d[0])] = d[1]);
 
-    //iterate through each curve and find points in the curve with the same X
+    //iterate through each curve
+    //and find points in the curve with the same X
     //DTW library needs exact pairs
-    Object.values(loaded_data[0].series).forEach(outer => {
-
+    Object.values(loaded_data[0].series)
+    .filter(outer => 
+      outer.events
+      .filter(inner => 
+        points.length == 0
+        || points.type.value === undefined
+        || (inner.eventType == points.type.value
+          && inner.x >= points[0]-2 //2-hr window
+          && inner.x <= points[0]+2)
+      ).length > 0
+    )
+    .forEach(outer => {
       const coords = outer.curve
         .filter(inner => roundForDTW(inner.x) in mapSketch)
         .map( inner => ({
