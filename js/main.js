@@ -6,6 +6,7 @@
   let strictIsoParse = d3.utcParse("%Y-%m-%dT%H:%M:%S.%L%Z");
   let div = d3.select("#timeline");
   let loaded_data = [];
+  let seriesDomain = [0, 1];
 
   let eventTypeDict = {
     'Snack Bolus':"snack",
@@ -138,6 +139,9 @@
   }
 
   function getDistance(curve, sketch) {
+    console.log('GET DISTANCE:', curve, sketch);
+
+
     return (new DynamicTimeWarping(curve, sketch, distFunc)
       .getDistance()/ curve.length) <= 400; //arbitrary threshold 
   }
@@ -171,6 +175,8 @@
           sketch: mapSketch[roundForDTW(inner.x)]
         }));
 
+      console.log(coords);
+
       if(getDistance(coords.map(d=> d.curve), coords.map(d => d.sketch))) {
 
         matches.push(outer.date);
@@ -203,7 +209,7 @@ function generate_cluster(sketch, points, bolCreateMultiple) {
     call_timeline(0);
 
     //new timeline
-    call_timeline(loaded_data.length-1);         
+    call_timeline(loaded_data.length-1);
 
   } else {
 
@@ -244,6 +250,8 @@ function build_timeline(smallMultiple) {
     .y(d => d.y)
     .xDomain([0, 24])
     .yDomain([0, 400])
+    .seriesDomain(seriesDomain)
+    .seriesScheme(d3.interpolatePuBu)
     .seriesKey(s => now.diff(moment(s.date), 'days'))
     .seriesData(s => s.curve)
     .smallMultiple(smallMultiple)
@@ -274,6 +282,13 @@ function build_timeline(smallMultiple) {
       .call(data.timeline);  
   }
 
+  function getSeriesDomain(series) {
+    const now = moment();
+    const seriesKeyAccessor = s => now.diff(moment(s.date), 'days');
+    const keys = series.map(seriesKeyAccessor);
+    return d3.extent(keys);
+  }
+
   /****************
   LOAD DATA
   ****************/
@@ -291,6 +306,8 @@ function build_timeline(smallMultiple) {
     return load_series_data(series, eventMap);
   })    
   .then(series => {
+    // Calculate the color domain.
+    seriesDomain = getSeriesDomain(series);
 
     add_timeline(series, [], [], false);
 
