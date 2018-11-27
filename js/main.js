@@ -193,7 +193,7 @@ function generate_cluster(sketch, points, bolCreateMultiple) {
 
   var matches = calculateDTW(sketch, points);
 
-  if(bolCreateMultiple && matches.length>0) {
+  if(bolCreateMultiple && matches.length > 0) {
 
     add_timeline(
       loaded_data[0].series.filter(
@@ -266,7 +266,7 @@ function build_timeline(smallMultiple) {
     .seriesKey(s => seriesKeyAccessor(s))
     .seriesData(s => s.curve)
     .legendTitle('# of Days Ago')
-    .legendCells(7)
+    .legendCells(10)
     .smallMultiple(smallMultiple)
     .on('change', function(curve, points){
       //console.log('change', curve, points);
