@@ -39,6 +39,30 @@
             .attr('for', `${id}-toggle`)
           .merge(label)
             .text(labelText);
+        
+        let tickContainer = group
+          .selectAll('.tick-container')
+          .data([0]);
+        tickContainer.exit().remove();
+        tickContainer = tickContainer
+          .enter()
+          .append('div')
+            .attr('class', 'tick-container')
+            .style('position', 'relative')
+          .merge(tickContainer);
+        let tick = tickContainer
+          .selectAll('.tick')
+          .data(ticks);
+        tick = tick
+          .enter()
+          .append('span')
+            .attr('class', 'tick')
+          .merge(tick)
+            .style('position', (d, i) => i === 0 ? '' : 'absolute')
+            .style('left', (d, i) => i === 0 ? 0 : '')
+            .style('right', (d, i) => i === 0 ? '' : 0)
+            .text(d => d.label);
+
         let input = group
           .selectAll('input')
           .data([0]);

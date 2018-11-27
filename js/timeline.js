@@ -1145,7 +1145,7 @@
           .attr('class', "form-group shape")
         .merge(formGroup)
           .style('position', 'absolute')
-          .style('top', d => `calc(${d.top}px + 4.8125rem)`)
+          .style('top', d => `calc(${d.top}px + 2.8125rem)`)
           .style('right', d => `1rem`)
           .style('width', SLIDER_WIDTH)
           .call(slider()
@@ -1207,7 +1207,7 @@
           .attr('class', 'label match-count')
         .merge(countLabel)
           .style('position', 'absolute')
-          .style('top', d => `calc(${d.top}px + 12.8125rem)`)
+          .style('top', d => `calc(${d.top}px + 14.8125rem)`)
           .style('right', d => `1rem`)
           .text(`${matchCount} of ${totalCount} matched`);
 
