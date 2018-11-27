@@ -43,7 +43,8 @@
   const CURVE_DISTANCE = 40; // Distance between touch and curve to consider the curve pressed.
   const POINT_DISTANCE = 40; // Distance between touch and point to consider the point pressed.
   const BOUND_DISTANCE = 20; // Distance between touch and boundary lines to consider the bounds pressed.
-  const SLIDER_WIDTH = '8rem';
+  const SLIDER_WIDTH = '8rem'; // Width of query mode slider controls
+  const NUM_HISTOGRAM_BINS = 7; // Number of bins for the bar charts
 
   /**
    * Scale points about another. Assumes points are in order. Modifies the points in place.
@@ -719,6 +720,7 @@
         renderSketch(svg, props, scales, data);
         renderPoints(svg, props, scales, data);
         renderEvents(svg, props, scales, data);
+        renderBarCharts(svg, props, scales, data);
 
         // Render the chart overlay.
         renderOverlay(svg);
@@ -843,6 +845,9 @@
 
       // Render the axis container. Do not clip.
       const axisContainer = renderContainer(svg, props, 'axis-content');
+
+       // Render the bar chart container. Do not clip.
+      const barChartContainer = renderContainer(svg, props, 'barChart-content');     
 
       // Render the lagend container. Do not clip.
       const legendContainer = renderContainer(svg, props, 'legend-content');
@@ -1083,6 +1088,13 @@
           .attr('fill', d => d.type.fill);
     }
 
+    /**
+     * Render the events on their corresponding curve.
+     * @param {object} svg The SVG selection
+     * @param {object} props The chart properties
+     * @param {object} scales The chart scales
+     * @param {object} data The data model
+     */
     function renderEvents(svg, props, scales, data) {
       const {
         x: xScale,
@@ -1117,6 +1129,104 @@
           .attr('stroke-width', 2)
           .attr('fill', d => _.find(TYPE_OPTIONS, { value: d.eventType }).fill);
     }    
+
+    /**
+     * Render the bar charts for small multiples.
+     * @param {object} svg The SVG selection
+     * @param {object} props The chart properties
+     * @param {object} scales The chart scales
+     * @param {object} data The data model
+     */
+    function renderBarCharts(svg, props, scales, data) {
+
+      function getSeriesSegment(min, max) {
+        return data.series
+          .filter(s => s.match)
+          .filter(() => smallMultiple)
+          .map(s => s.curve)
+          .map(c => 
+            c.filter(p =>
+              p.x >= min && p.x <= max
+            )
+          ).map(c => 
+            d3.sum(c, p => p.y)/c.length
+          )       
+      }
+
+      function buildBarChart(segment, offset) {
+        
+        let bars = container
+          .selectAll('.bar.bar-'+segment)
+          .data(bar_data[segment]);
+        bars.exit().remove();
+        bars = bars
+          .enter()
+          .append('rect')
+            .attr('class', 'bar bar-'+segment)
+          .merge(bars)
+            .attr("x", props.width-props.margin.right+20+(60*offset))
+            .attr("y", d => yScale(d.x1))
+            .attr("height", .5*yScale.domain()[1]/NUM_HISTOGRAM_BINS)
+            .attr("width", function(d) { 
+              return barYScale(d.length); 
+            })
+            .attr('fill', "grey");        
+      }
+
+      const {
+        x: xScale,
+        y: yScale,
+        key: keyScale,
+      } = scales;      
+
+      const container = svg.select(".barChart-content");
+
+      const histogram = d3.histogram()
+        //.value(function(d) { return d.date; })
+        .domain(yScale.domain())
+        .thresholds(NUM_HISTOGRAM_BINS);
+
+      //get data for each segment
+      bar_data = {};
+      if(data.sketch.length >0 && smallMultiple){
+        bar_data["before"] = histogram(getSeriesSegment(0, data.sketch[0][0]));
+        bar_data["during"] = histogram(getSeriesSegment(data.sketch[0][0],
+          data.sketch[data.sketch.length-1][0]));
+        bar_data["after"] = histogram(getSeriesSegment(data.sketch[0][0],
+          xScale.domain()[1]));
+
+        //scales
+        var barYScale = d3.scaleLinear()
+          .domain([0, data.series.filter(s => s.match).length])
+          .range([0,50]); 
+
+        var barXScale = d3.scaleOrdinal()
+          .domain(["Before", "During", "After"])  
+          .range([0,70, 140]) 
+
+        //axes
+        container
+          .append('g')
+            .attr('transform', d => 
+              `translate(${props.chartWidth+40}, 0)`
+            )
+            .call(d3.axisLeft(yScale));
+
+        container
+          .append('g')
+            .attr('transform', d => 
+              `translate(${props.chartWidth+40}, ${props.chartHeight})`
+            )
+            .call(d3.axisBottom(barXScale));            
+
+        //build charts
+        i = 0;
+        Object.keys(bar_data).forEach( key => {
+          buildBarChart(key, i);
+          i++;
+        })                    
+      }
+    }
 
     /**
      * Render the overlay for touch events.
