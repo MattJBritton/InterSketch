@@ -45,7 +45,7 @@
   const CURVE_DISTANCE = 40; // Distance between touch and curve to consider the curve pressed.
   const POINT_DISTANCE = 40; // Distance between touch and point to consider the point pressed.
   const BOUND_DISTANCE = 20; // Distance between touch and boundary lines to consider the bounds pressed.
-  const SLIDER_WIDTH = 60;
+  const SLIDER_WIDTH = '8rem';
 
   /**
    * Scale points about another. Assumes points are in order. Modifies the points in place.
@@ -1134,91 +1134,83 @@
           .attr('stroke-width', d => d.selected ? 4 : 2)
           .attr('stroke-dasharray', 4);
 
-      var thresholdSlider = slid3r()
-        .width(SLIDER_WIDTH)
-        .range([300, 900])
-        .startPos(500)
-        .customTicks([
-          {pos:300, label: "Exact"},
-          {pos:800, label: "Rough"}
-        ])
-        .label('')
-        .loc([
-          props.width-SLIDER_WIDTH-20, 
-          props.height - (props.margin.top+100)]
-        )
-        .handleColor("blue")
-        .font("sans-serif")
-        .onDrag(d => onModeChange(svg,"threshold",d))
-        .onDone(d => onModeChange(svg,"threshold",d));
-
-      var shapeModeSlider = slid3r()
-        .width(SLIDER_WIDTH)
-        .range([0, 1])
-        .startPos(0)
-        .numTicks(0)
-        .clamp(true)
-        .customTicks([
-          {pos:0, label: "No"},
-          {pos:1, label: "Yes"}
-        ])
-        .label('')
-        .loc([
-          props.width-SLIDER_WIDTH-20, 
-          props.height - (props.margin.top+150)]
-        )
-        .handleColor("blue")
-        .font("sans-serif")
-        .onDone(d => onModeChange(svg,"shape",d));
-
-      // Render the abs/relative toggle
-      let shapeModeToggle = svg
-        .selectAll('.tgle.tgle-shape')
-        .data(changed ? [getOffset(svgEl)] : []);
-      shapeModeToggle.exit().remove();
-      shapeModeToggle = shapeModeToggle
-        .enter()    
-        .append('g')
-          .attr("id", "shapeModeToggleBtn")
-          .attr("class", "tgle tgle-shape");
-      shapeModeToggle
-        .append("text")
-          .attr("x", -10)
-          .attr("y", -10)     
-          .style("font-family", "sans-serif")
-          .style("font-size", 10) 
-          .text("Query By Shape");
-        //.merge(absModeToggle)
-      shapeModeToggle
+      // Render the mode slider
+      let formGroup = d3.select('body')
+        .selectAll('.form-group.shape')
+        .data([getOffset(svgEl)]);
+      formGroup.exit().remove();
+      formGroup = formGroup
+        .enter()
+        .append('div')
+          .attr('class', "form-group shape")
+        .merge(formGroup)
           .style('position', 'absolute')
-          .call(shapeModeSlider);
+          .style('top', d => `calc(${d.top}px + 4.8125rem)`)
+          .style('right', d => `1rem`)
+          .style('width', SLIDER_WIDTH)
+          .call(slider()
+            .min(0)
+            .max(1)
+            .startValue(0)
+            .step(1)
+            .label('Query By Shape')
+            .disabled(() => !changed)
+            .ticks([
+              { value: 0, label: "No" },
+              { value: 1, label: "Yes" },
+            ])
+            .on('change', (value) => { onModeChange(svg, "shape", value); }
+          ));
 
       // Render the threshold slider
-      let thresholdToggle = svg
-        .selectAll('.tgle.tgle-threshold')
-        .data(changed ? [getOffset(svgEl)] : []);
-      thresholdToggle.exit().remove();
-      thresholdToggle = thresholdToggle
-        .enter()    
-        .append('g')
-          .attr("id", "thresholdToggleBtn")
-          .attr("class", "tgle tgle-threshold");
-      thresholdToggle
-        .append("text")
-          .attr("x", -10)
-          .attr("y", -10)     
-          .style("font-family", "sans-serif")
-          .style("font-size", 10) 
-          .text("Query Precision");
-        thresholdToggle
-        .merge(thresholdToggle)
+      formGroup = d3.select('body')
+        .selectAll('.form-group.threshold')
+        .data([getOffset(svgEl)]);
+      formGroup.exit().remove();
+      formGroup = formGroup
+        .enter()
+        .append('div')
+          .attr('class', "form-group threshold")
+        .merge(formGroup)
           .style('position', 'absolute')
-          .call(thresholdSlider);          
+          .style('top', d => `calc(${d.top}px + 8.8125rem)`)
+          .style('right', d => `1rem`)
+          .style('width', SLIDER_WIDTH)
+          .call(slider()
+            .min(300)
+            .max(800)
+            .startValue(500)
+            .label('Query Precision')
+            .disabled(() => !changed)
+            .ticks([
+              { value: 300, label: "Exact" },
+              { value: 800, label: "Rough" },
+            ])
+            .on('change', (value) => { onModeChange(svg, "threshold", value); }
+          ));
+
+      // Render information about the number of matches.
+      let matchCount = 0;
+      svg.selectAll('.series-content .series')
+        .each((d) => { if (d.match) { matchCount += 1; } });
+      let countLabel = d3.select('body')
+        .selectAll('.match-count')
+        .data([getOffset(svgEl)]);
+      countLabel.exit().remove();
+      countLabel = countLabel
+        .enter()
+        .append('div')
+          .attr('class', 'label match-count')
+        .merge(countLabel)
+          .style('position', 'absolute')
+          .style('top', d => `calc(${d.top}px + 12.8125rem)`)
+          .style('right', d => `1rem`)
+          .text(`${matchCount} matches`);
 
       // Render the save button.
       let saveBtn = d3.select('body')
         .selectAll('.btn.btn-save')
-        .data(changed ?[getOffset(svgEl)]:[]);
+        .data([getOffset(svgEl)]);
       saveBtn.exit().remove();
       saveBtn = saveBtn
         .enter()
@@ -1226,7 +1218,7 @@
           .attr('class', 'btn btn-primary btn-save')
           .on('touchend', _.partial(onSaveClick, svg))
         .merge(saveBtn)
-          .classed('disabled', !changed)
+          .property('disabled', !changed)
           .style('position', 'absolute')
           .style('top', d => `calc(${d.top + d.height}px - 5rem)`)
           .style('left', d => `calc(${d.left + d.width}px - 5rem)`)
@@ -1368,8 +1360,6 @@
         }),
         share(),
       );
-
-      press$.subscribe(() => console.log('PRESS'));
 
       // Search for the closest object pressed and split by object type.
       const picked$ = press$.pipe(
