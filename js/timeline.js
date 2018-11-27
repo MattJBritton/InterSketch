@@ -720,6 +720,9 @@
         renderSeries(svg, props, scales, data);
         renderSketch(svg, props, scales, data);
         renderPoints(svg, props, scales, data);
+
+        // Render the chart overlay.
+        renderOverlay(svg);
       });
     }
 
@@ -838,9 +841,6 @@
 
       // Render the event container. Do not clip.
       const pointContainer = renderContainer(svg, props, 'point-content');
-
-      // Render the touch overlay.
-      const overlay = renderOverlay(svg);
 
       // Render the axis container. Do not clip.
       const axisContainer = renderContainer(svg, props, 'axis-content');
@@ -1191,8 +1191,12 @@
 
       // Render information about the number of matches.
       let matchCount = 0;
+      let totalCount = 0;
       svg.selectAll('.series-content .series')
-        .each((d) => { if (d.match) { matchCount += 1; } });
+        .each((d) => {
+          if (d.match) { matchCount += 1; }
+          totalCount += 1;
+        });
       let countLabel = d3.select('body')
         .selectAll('.match-count')
         .data([getOffset(svgEl)]);
@@ -1205,7 +1209,7 @@
           .style('position', 'absolute')
           .style('top', d => `calc(${d.top}px + 12.8125rem)`)
           .style('right', d => `1rem`)
-          .text(`${matchCount} matches`);
+          .text(`${matchCount} of ${totalCount} matched`);
 
       // Render the save button.
       let saveBtn = d3.select('body')
