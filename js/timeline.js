@@ -1,5 +1,3 @@
-// TODO: Add implicit start and end control points
-// TODO: Better padding.
 (function(global, d3, _, contextMenu, vector) {
   const DEFAULT_SMALL_MULTIPLE = false;
   const DEFAULT_LEGEND_TITLE = 'Series';
@@ -1086,11 +1084,9 @@
     }
 
     function renderEvents(svg, props, scales, data) {
-
       const {
         x: xScale,
         y: yScale,
-        key: keyScale,
       } = scales;
 
       function getMatchingSeries(event) {
@@ -1098,14 +1094,11 @@
       }
 
       const container = svg.select('.series-content');
-      
-      var bisect = d3.bisector(d => d.x).left;
+      const bisect = d3.bisector(d => d.x).left;
 
       let events = container
         .selectAll('.event')
-        .data(data.events.filter(e => smallMultiple 
-          || getMatchingSeries(e).match)
-        );
+        .data(data.events.filter(e => smallMultiple || getMatchingSeries(e).match));
       events.exit().remove();
       events = events
         .enter()
@@ -1121,9 +1114,8 @@
             )
           )
           .attr('r', 6)
-          //.attr('stroke', d => d.type.stroke)
           .attr('stroke-width', 2)
-          .attr('fill', "black");
+          .attr('fill', d => _.find(TYPE_OPTIONS, { value: d.eventType }).fill);
     }    
 
     /**

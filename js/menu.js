@@ -1,18 +1,4 @@
 (function(global, d3, $, _) {
-  const TYPE_OPTIONS = [
-    { fill: 'transparent', stroke: 'black', label: 'None', 
-      value: undefined },
-    { fill: 'black', stroke: 'transparent', label: 'Meal', value: 'meal' },
-    { fill: 'blue', stroke: 'transparent', label: 'Snack', value: 'snack' },
-    { fill: 'red', stroke: 'transparent', label: 'Carbs Only', 
-      value: 'carb_correction'},
-    { fill: 'green', stroke: 'transparent', label: 'Insulin Only', 
-      value: 'insulin_correction'}
-  ];
-  const ACTION_OPTIONS = [
-    { icon: 'far fa-times-circle', label: 'Remove', event: 'remove' },
-  ];
-
   global.contextMenu = function() {
     const dispatch = d3.dispatch(
       'change',

@@ -1,6 +1,4 @@
 (function(global, timeline, d3, moment, _) {
-
-  let formatTime = d3.timeFormat("%B %d, %Y");
   let startDate = new Date(2017,4,1);
   let endDate = new Date(2017,6,30);
   let strictIsoParse = d3.utcParse("%Y-%m-%dT%H:%M:%S.%L%Z");
@@ -10,10 +8,10 @@
   let distanceThreshold = 500;
   let queryByShape = false;
   let eventTypeDict = {
-    'Snack Bolus':"snack",
-    "Meal Bolus":"meal",
+    "Snack Bolus": "snack",
+    "Meal Bolus": "meal",
     "Carb Correction": "carb_correction",
-    "Correction Bolus": "insulin_correction"
+    "Correction Bolus": "insulin_correction",
   };
 
   function load_event_data(events) {
