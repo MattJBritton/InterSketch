@@ -38,15 +38,14 @@
     label: 'None',
     value: undefined,
   };
-  const DOUBLE_TAP_INTERVAL = 350;
-  const PRESS_INTERVAL = 300;
-  const PINCH_BUFFER = 250;
-  const MOVE_DELTA = 10;
-  const SCALE_DELTA = 0.1;
-  const CURVE_DISTANCE = 20;
-  const POINT_DISTANCE = 20;
-  const BOUND_DISTANCE = 20;
 
+  const DOUBLE_TAP_INTERVAL = 350; // Interval in which two taps need to occur.
+  const PRESS_INTERVAL = 300; // Interval after which a press is registered.
+  const POINT_BUFFER = 250; // Amount of time to buffer touches to decide how many are being used.
+  const MOVE_DELTA = 20; // Minimum amount of distance required to move before registering a sketch.
+  const CURVE_DISTANCE = 40; // Distance between touch and curve to consider the curve pressed.
+  const POINT_DISTANCE = 40; // Distance between touch and point to consider the point pressed.
+  const BOUND_DISTANCE = 20; // Distance between touch and boundary lines to consider the bounds pressed.
 
   /**
    * Scale points about another. Assumes points are in order. Modifies the points in place.
@@ -97,6 +96,24 @@
     });
 
     return [before, slice, after];
+  }
+
+  /**
+   * Check if a value is within the given range.
+   * @param {number} value The value.
+   * @param {number} start The start range.
+   * @param {number} end The end range.
+   * @param {boolean} exclusive If true, testing will exclude end points.
+   */
+  function withinRange(value, start, end, exclusive) {
+    if (exclusive) {
+      if (value > start && value < end) return true;
+      if (value > end && value < start) return true;
+    } else {
+      if (value >= start && value <= end) return true;
+      if (value >= end && value <= start) return true;
+    }
+    return false;
   }
 
   /**
@@ -392,6 +409,64 @@
   }
 
   /**
+   * Find the point(s) of intersection between a path and a line, if any. Adapted from https://bl.ocks.org/bricof/f1f5b4d4bc02cad4dea454a3c5ff8ad7.
+   * @param {SVGPathElement} pathEl The SVG path element.
+   * @param {object} line The line.
+   * @param {number} [segments=100] The number of segments.
+   */
+  function pathLineIntersection(pathEl, line, segments=100) {
+    // Break up the line into arbitrary segments and test for line/line intersection within each one.
+    let i = -1;
+    let p1;
+    let p2;
+    let lineB;
+    let point;
+    const points = [];
+    const pathLength = pathEl.getTotalLength();
+    while (++i < segments) {
+      p1 = pathEl.getPointAtLength(pathLength * i / segments);
+      p2 = pathEl.getPointAtLength(pathLength * (i + 1) / segments);
+      lineB = { x1: p1.x, x2: p2.x, y1: p1.y, y2: p2.y };
+      point = lineLineIntersection(line, lineB);
+      if (point !== null) {
+        points.push(point);
+      } 
+    }
+    return points;
+  }
+
+  /**
+   * Find the point of intersection between two lines, if any. Adapted from https://en.wikipedia.org/wiki/Line–line_intersection
+   * and https://bl.ocks.org/bricof/f1f5b4d4bc02cad4dea454a3c5ff8ad7.
+   * @param {object} lineA The first line.
+   * @param {object} lineB The second line.
+   */
+  function lineLineIntersection(lineA, lineB) {
+    const x1 = lineA.x1;
+    const x2 = lineA.x2;
+    const x3 = lineB.x1;
+    const x4 = lineB.x2;
+    const y1 = lineA.y1;
+    const y2 = lineA.y2;
+    const y3 = lineB.y1;
+    const y4 = lineB.y2;
+    const denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    const xNumerator = (x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4);
+    const yNumerator = (x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4);
+    const px = xNumerator / denominator;
+    const py = yNumerator / denominator;
+    if ((denominator !== 0
+      && withinRange(px, x1, x2)
+      && withinRange(py, y1, y2)
+      && withinRange(px, x3, x4)
+      && withinRange(py, y3, y4))
+    ) {
+      return [px, py];
+    }
+    return null;
+  }
+
+  /**
    * Return the most common data type in an array.
    * @param {array<*>} array The data array.
    * @param {function} valueAccessor A function to return the value for each datum in the array.
@@ -587,7 +662,8 @@
     const localCurve = d3.local();
     const localPoints = d3.local();
     const localSketching = d3.local();
-    const localZooming = d3.local();
+    const localPinching = d3.local();
+    const localSwiping = d3.local();
     const localChanged = d3.local();
 
     const dispatch = d3.dispatch(
@@ -622,16 +698,18 @@
         if (localSketching.get(this) === undefined) {
           localSketching.set(this, false);
         }
-        if (localZooming.get(this) === undefined) {
-          localZooming.set(this, false);
+        if (localPinching.get(this) === undefined) {
+          localPinching.set(this, false);
+        }
+        if (localSwiping.get(this) === undefined) {
+          localSwiping.set(this, false);
         }
         if (localChanged.get(this) === undefined) {
           localChanged.set(this, false);
         }
-
         localCurve.set(this, getPoints(svg, data.sketch));
         localPoints.set(this, getPoints(svg, data.points));
-
+        
         // Render the chart skeleton.
         renderChart(svg, props);
         renderAxes(svg, props, axes);
@@ -1176,7 +1254,7 @@
 
       // Presses.
       const press$ = fromEvent(this, 'touchstart').pipe(
-        filter(() => !smallMultiple && !localZooming.get(svgEl)),
+        filter(() => !smallMultiple && !localPinching.get(svgEl) && !localSwiping.get(svgEl)),
         tap(preventDefault),
         map(evt => toTouchArray(evt.changedTouches)),
         filter(touches => touches.length === 1),
@@ -1198,16 +1276,17 @@
           // Emit an event after a timeout, unless it is a pinch event, interrupted by movement, or interrupted by an
           // event ending the touch.
           return timer(PRESS_INTERVAL).pipe(
-            takeUntil(pinch$), // TODO: Why is this not working?
+            filter(() => !localPinching.get(svgEl) && !localSwiping.get(svgEl)),
+            map(() => touchPoint(containerEl, touches)),
             takeUntil(touchdelta$),
             takeUntil(touchend$),
-            filter(() => !localZooming.get(svgEl)),
-            map(() => touchPoint(containerEl, touches)),
             catchError(err => empty())
           );
         }),
         share(),
       );
+
+      press$.subscribe(() => console.log('PRESS'));
 
       // Search for the closest object pressed and split by object type.
       const picked$ = press$.pipe(
@@ -1399,9 +1478,11 @@
 
       // Sketch start events.
       const sketch$ = fromEvent(this, 'touchstart').pipe(
-        filter(() => !smallMultiple && !localZooming.get(svgEl)),
+        filter(() => !smallMultiple && !localPinching.get(svgEl) && !localSwiping.get(svgEl)),
         tap(preventDefault),
         map(evt => toTouchArray(evt.changedTouches)),
+        clusterTime(50),
+        map(touches => _.uniqBy(_.flatten(touches), t => t.identifier)),
         filter((touches) => {
           const selected = localPoints.get(svgEl).filter(d => d.selected);
           return touches.length === 1 || selected.length === 1;
@@ -1425,10 +1506,9 @@
           // Buffer touch movement until significant movement occurs uninterrupted by a pinch event, an event ending
           // the touch, or by the timer for a press. Release the buffer as a cluster of touches to start the sketch.
           return touchmove$.pipe(
-            takeUntil(pinch$), // TODO: Not working?
+            filter(() => !localPinching.get(svgEl) && !localSwiping.get(svgEl)),
             takeUntil(touchend$),
             takeUntil(timer(PRESS_INTERVAL)),
-            filter(() => !localZooming.get(svgEl)),
             buffer(touchdelta$),
             first(),
             map(head => head.length === 0 ? [touches] : head),
@@ -1440,6 +1520,7 @@
 
       // onSketchStart and onSketch events.
       sketch$.pipe(
+        tap(() => localSketching.set(svgEl, true)),
         tap(_.partial(onSketchStart, svg)),
         concatMap(head => {
           const touchIds = head[0].map(t => t.identifier);
@@ -1466,6 +1547,7 @@
           ).pipe(
             filterTouches(touchIds),
             first(),
+            tap(() => localSketching.set(svgEl, false)),
             catchError(err => empty())
           );
         })
@@ -1476,7 +1558,7 @@
         filter(() => !smallMultiple && !localSketching.get(svgEl)),
         tap(preventDefault),
         map(evt => toTouchArray(evt.changedTouches)),
-        clusterTime(PINCH_BUFFER),
+        clusterTime(POINT_BUFFER),
         map(touches => _.uniqBy(_.flatten(touches), t => t.identifier)),
         filter(touches => touches.length === 2),
         share()
@@ -1484,6 +1566,7 @@
 
       // onZoomStart and onZoom events.
       pinch$.pipe(
+        tap(() => localPinching.set(svgEl, true)),
         tap(_.partial(onZoomStart, svg)),
         concatMap(touches => {
           const touchIds = touches.map(t => t.identifier);
@@ -1513,10 +1596,66 @@
           ).pipe(
             filterTouches(touchIds),
             first(),
+            tap(() => localPinching.set(svgEl, false)),
             catchError(err => empty())
           );
         })
       ).subscribe(_.partial(onZoomEnd, svg));
+
+      // A swipe is three touches within quick succession.
+      const swipe$ = fromEvent(this, 'touchstart').pipe(
+        filter(() => !smallMultiple && !localSketching.get(svgEl)),
+        tap(preventDefault),
+        map(evt => toTouchArray(evt.changedTouches)),
+        clusterTime(POINT_BUFFER),
+        map(touches => _.uniqBy(_.flatten(touches), t => t.identifier)),
+        filter(touches => touches.length === 3),
+        share()
+      );
+
+      swipe$.subscribe(() => console.log('SWIPE'));
+
+      // onSwipeStart and onSwipe events.
+      swipe$.pipe(
+        tap(() => localSwiping.set(svgEl, true)),
+        tap(_.partial(onSwipeStart, svg)),
+        concatMap(touches => {
+          const initPoint = touchPoint(containerEl, touches);
+          const touchIds = touches.map(t => t.identifier);
+          const touchmove$ = fromEvent(this, 'touchmove')
+            .pipe(filterTouches(touchIds));
+          const touchend$ = merge(
+            fromEvent(this, 'touchend'),
+            fromEvent(this, 'touchcancel')
+          ).pipe(filterTouches(touchIds));
+
+          return touchmove$.pipe(
+            startWith(touches),
+            takeUntil(touchend$),
+            map(touches => touchPoint(containerEl, touches)),
+            pairwise(),
+            map(([prevPoint, nextPoint]) => [initPoint, prevPoint, nextPoint]),
+            catchError(err => empty())
+          );
+        })
+      ).subscribe(([initPoint, prevPoint, nextPoint]) => onSwipe(svg, initPoint, prevPoint, nextPoint));
+
+      // onSwipeEnd events.
+      swipe$.pipe(
+        concatMap(touches => {
+          const touchIds = touches.map(t => t.identifier);
+          return merge(
+            fromEvent(this, 'touchend'),
+            fromEvent(this, 'touchcancel')
+          ).pipe(
+            filterTouches(touchIds),
+            first(), // TODO: This should count up the fingers that have been released and wait for three.
+            tap(() => localSwiping.set(svgEl, false)),
+            catchError(err => empty())
+          );
+        })
+      ).subscribe(_.partial(onSwipeEnd, svg));
+
     }
 
     function onSketchStart(svg, head) {
@@ -1548,7 +1687,6 @@
       curve = curve.concat(start);
       localCurve.set(svgEl, curve);
       localPoints.set(svgEl, points);
-      localSketching.set(svgEl, true);
       renderSketch(svg);
       renderOverlay(svg);
       renderPoints(svg);
@@ -1568,7 +1706,6 @@
         curve.push(point);
         renderSketch(svg);
         renderOverlay(svg);
-
         // const curveInverse = getInverse(svgEl, curve);
         // const pointsInverse = getInverse(svgEl, points);
         // dispatch.call('sketch', svgEl, curveInverse, pointsInverse);
@@ -1579,7 +1716,6 @@
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
       const points = localPoints.get(svgEl);
-      localSketching.set(svgEl, false);
       localChanged.set(svgEl, true);
       // TODO: Post-processing of curve?
       renderOverlay(svg);
@@ -1634,7 +1770,6 @@
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
       const selected = points.filter(d => d.selected);
-
       if (selected.length === 2) {
         // Stretch/trunctate
         const curve = localCurve.get(svgEl);
@@ -1689,7 +1824,6 @@
       localChanged.set(svgEl, true);
       renderPoints(svg);
       renderOverlay(svg);
-
       const curveInverse = getInverse(svgEl, curve);
       const pointsInverse = getInverse(svgEl, points);
       dispatch.call('pointChange', svgEl, curveInverse, pointsInverse);
@@ -1746,8 +1880,8 @@
       // Clear existing control points.
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
-      const points = localPoints.get(svgEl);
-      localPoints.set(svgEl, points.filter(d => !!d.type.value));
+      const points = localPoints.get(svgEl).filter(d => !!d.type.value);
+      localPoints.set(svgEl, points);
       localChanged.set(svgEl, true);
       renderPoints(svg);
       renderMenus(svg);
@@ -1765,8 +1899,6 @@
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
       const points = localPoints.get(svgEl);
-      localZooming.set(svgEl, true);
-
       const curveInverse = getInverse(svgEl, curve);
       const pointsInverse = getInverse(svgEl, points);
       dispatch.call('zoomStart', svgEl, curveInverse, pointsInverse);
@@ -1776,7 +1908,7 @@
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
       const points = localPoints.get(svgEl);
-      if (curve && localZooming.get(svgEl)) {
+      if (curve && localPinching.get(svgEl)) {
         // Determine the scale.
         const prevDist = distanceTo(prevPoints[0], prevPoints[1]);
         const nextDist = distanceTo(nextPoints[0], nextPoints[1]);
@@ -1799,7 +1931,6 @@
       const svgEl = svg.node();
       const curve = localCurve.get(svgEl);
       const points = localPoints.get(svgEl);
-      localZooming.set(svgEl, false);
       localChanged.set(svgEl, true);
       renderOverlay(svg);
 
@@ -1807,6 +1938,54 @@
       const pointsInverse = getInverse(svgEl, points);
       dispatch.call('zoomEnd', svgEl, curveInverse, pointsInverse);
       dispatch.call('change', svgEl, curveInverse, pointsInverse);
+    }
+
+    function onSwipeStart(svg, points) {
+    }
+
+    function onSwipe(svg, initPoint, prevPoint, nextPoint) {
+      const svgEl = svg.node();
+      let curve = localCurve.get(svgEl);
+      let points = localPoints.get(svgEl);
+      const selected = points.filter(d => d.selected);
+      if (curve.length && localSwiping.get(svgEl)) {
+        // Does a line between the initial swipe point and the current swipe point intersect the curve? If so, where?
+        const sketchEl = svg.select('.series.visible').node();
+        const intersects = pathLineIntersection(sketchEl, {
+          x1: initPoint[0],
+          x2: nextPoint[0],
+          y1: initPoint[1],
+          y2: nextPoint[1],
+        });
+        if (intersects.length && selected.length) {
+          const anchor = selected[0];
+          const point = intersects[0];
+          if (anchor[0] <= point[0]) {
+            curve = sliceBetween(curve, curve[0], anchor)[1];
+            curve.push(anchor);
+            points = sliceBetween(points, curve[0], anchor)[1];
+          } else {
+            curve = sliceBetween(curve, anchor, curve[curve.length - 1])[1];
+            curve.unshift(anchor);
+            points = sliceBetween(points, anchor, curve[curve.length - 1])[1];
+          }
+        } else if (intersects.length) {
+          curve = [];
+          points = [];
+        }
+        if (intersects.length) {
+          localCurve.set(svgEl, curve);
+          localPoints.set(svgEl, points);
+          const curveInverse = getInverse(svgEl, curve);
+          const pointsInverse = getInverse(svgEl, points);
+          // dispatch.call('swipe', svgEl, curveInverse, pointsInverse);
+          dispatch.call('change', svgEl, curveInverse, pointsInverse);
+        }
+      }
+    }
+
+    function onSwipeEnd(svg) {
+      
     }
 
     function onMenuChange(svg, point, option) {

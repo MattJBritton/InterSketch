@@ -139,8 +139,9 @@
   }
 
   function getDistance(curve, sketch) {
-    return (new DynamicTimeWarping(curve, sketch, distFunc)
-      .getDistance()/ curve.length) <= 400; //arbitrary threshold 
+    return curve.length && sketch.length
+      ? (new DynamicTimeWarping(curve, sketch, distFunc).getDistance() / curve.length) <= 400
+      : false;
   }
 
   function calculateDTW(sketch, points){
@@ -184,7 +185,7 @@ function generate_cluster(sketch, points, bolCreateMultiple) {
 
   var matches = calculateDTW(sketch, points);
 
-  if(bolCreateMultiple && matches.length>0) {
+  if(bolCreateMultiple && matches.length > 0) {
 
     add_timeline(
       loaded_data[0].series.filter(
