@@ -1,13 +1,14 @@
 (function(global, timeline, d3, moment, _) {
 
   let formatTime = d3.timeFormat("%B %d, %Y");
-  let startDate = new Date(2017,5,1);
-  let endDate = new Date(2017,6,25);
+  let startDate = new Date(2017,4,1);
+  let endDate = new Date(2017,6,30);
   let strictIsoParse = d3.utcParse("%Y-%m-%dT%H:%M:%S.%L%Z");
   let div = d3.select("#timeline");
   let loaded_data = [];
   let seriesDomain = [0, 1];
-
+  let distanceThreshold = 500;
+  let queryByShape = false;
   let eventTypeDict = {
     'Snack Bolus':"snack",
     "Meal Bolus":"meal",
@@ -138,10 +139,14 @@
     return Math.round(d*10)/10.;
   }
 
-  function getDistance(curve, sketch) {
-    return curve.length && sketch.length
-      ? (new DynamicTimeWarping(curve, sketch, distFunc).getDistance() / curve.length) <= 400
-      : false;
+  function getDistance(curve, sketch, threshold) {
+
+    if(sketch.length < 3 || curve.length <3) {
+      return false;
+    }
+
+    return (new DynamicTimeWarping(curve, sketch, distFunc)
+      .getDistance()/ curve.length) <= threshold;
   }
 
   function calculateDTW(sketch, points){
@@ -150,6 +155,8 @@
     //turn sketch into X:Y dict
     var mapSketch = {}
     sketch.forEach(d => mapSketch[roundForDTW(d[0])] = d[1]);
+
+    const sketchNormalizer = (queryByShape?sketch[0][1]:0);
 
     //iterate through each curve
     //and find points in the curve with the same X
@@ -166,13 +173,20 @@
       ).length > 0
     )
     .forEach(outer => {
+
       const coords = outer.curve
         .filter(inner => roundForDTW(inner.x) in mapSketch)
-        .map( inner => ({
+        .map(inner => ({
           curve: inner.y,
           sketch: mapSketch[roundForDTW(inner.x)]
         }));
-      if(getDistance(coords.map(d=> d.curve), coords.map(d => d.sketch))) {
+
+      const normalizer = queryByShape?coords[0].curve:0;   
+
+      if(getDistance(
+        coords.map(d => d.curve - normalizer),
+        coords.map(d => d.sketch - sketchNormalizer),
+        distanceThreshold)) {
 
         matches.push(outer.date);
       }
@@ -235,11 +249,10 @@ function add_timeline(series, sketch, points, smallMultiple) {
 function build_timeline(smallMultiple) {
 
   // Create the main timeline component.
-  const now = moment();
   return timeline()
-    .margin({ top: 10, right: 80, left: 30, bottom: 30 })
+    .margin({ top: 10, right: 200, left: 30, bottom: 30 })
     .padding({ top: 2 })
-    .axis({ bottom: 'Hour of Day', left: 'Measurement' })
+    .axis({ bottom: 'Hour of Day', left: 'Blood Glucose (mg/dL)' })
     .curve(d3.curveMonotoneX)
     .x(d => d.x)
     .y(d => d.y)
@@ -247,22 +260,37 @@ function build_timeline(smallMultiple) {
     .yDomain([0, 400])
     .seriesDomain(seriesDomain)
     .seriesScheme(d3.interpolatePuBu)
-    .seriesKey(s => now.diff(moment(s.date), 'days'))
+    .seriesKey(s => seriesKeyAccessor(s))
     .seriesData(s => s.curve)
     .legendTitle('# of Days Ago')
-    .legendCells(7)
+    .legendCells(10)
     .smallMultiple(smallMultiple)
     .on('change', function(curve, points){
       //console.log('change', curve, points);
       loaded_data[0].sketch = curve;
       loaded_data[0].points = points;
-      generate_cluster(curve, points.filter(p => !!p.type.value), false); // Only consider points that are an event type.
+      generate_cluster(curve, 
+                      points.filter(p => !!p.type.value), 
+                      false); // Only consider points that are an event type.
     })
+    .on('modeChange', function(modeType, value){
+      console.log('modeChange', modeType, value);
+      if(modeType == 'threshold') {
+        distanceThreshold = value;
+      } else {
+        queryByShape = value==1?true:false;
+      }
+      generate_cluster(loaded_data[0].sketch, 
+                      loaded_data[0].points.filter(p => !!p.type.value), 
+                      false); // Only consider points that are an event type.
+    })    
     .on('sketchSave', function(curve, points){
       // console.log('sketchSave', curve, points);
       loaded_data[0].sketch = [];
       loaded_data[0].points = [];
-      generate_cluster(curve, points.filter(p => !!p.type.value), true);
+      generate_cluster(curve, 
+                      points.filter(p => !!p.type.value),
+                      true);
     }); 
 }  
 
@@ -280,10 +308,11 @@ function build_timeline(smallMultiple) {
   }
 
   function getSeriesDomain(series) {
-    const now = moment();
-    const seriesKeyAccessor = s => now.diff(moment(s.date), 'days');
-    const keys = series.map(seriesKeyAccessor);
-    return d3.extent(keys).reverse();
+    return d3.extent(series.map(seriesKeyAccessor)).reverse();
+  }
+
+  function getMaxDate(series) {
+    return d3.max(series, s=> moment(s.date));
   }
 
   /****************
@@ -304,6 +333,10 @@ function build_timeline(smallMultiple) {
   })    
   .then(series => {
     // Calculate the color domain.
+    maxDate = getMaxDate(series);
+    seriesKeyAccessor = function(s){ 
+      return maxDate.diff(moment(s.date), 'days')
+    };    
     seriesDomain = getSeriesDomain(series);
 
     add_timeline(series, [], [], false);

@@ -38,7 +38,6 @@
     label: 'None',
     value: undefined,
   };
-
   const DOUBLE_TAP_INTERVAL = 350; // Interval in which two taps need to occur.
   const PRESS_INTERVAL = 300; // Interval after which a press is registered.
   const POINT_BUFFER = 250; // Amount of time to buffer touches to decide how many are being used.
@@ -46,6 +45,7 @@
   const CURVE_DISTANCE = 40; // Distance between touch and curve to consider the curve pressed.
   const POINT_DISTANCE = 40; // Distance between touch and point to consider the point pressed.
   const BOUND_DISTANCE = 20; // Distance between touch and boundary lines to consider the bounds pressed.
+  const SLIDER_WIDTH = 60;
 
   /**
    * Scale points about another. Assumes points are in order. Modifies the points in place.
@@ -677,6 +677,7 @@
       'zoom',
       'zoomEnd',
       'change',
+      'modeChange'
     );
 
     function timeline(svgSelection) {
@@ -975,6 +976,7 @@
         const container = svg.select('.legend-content')
         const legend = d3
           .legendColor()
+          .labelFormat(d3.format("d"))
           .cells(legendCells)
           .title(legendTitle)
           .titleWidth(props.margin.right - 7)
@@ -1132,10 +1134,91 @@
           .attr('stroke-width', d => d.selected ? 4 : 2)
           .attr('stroke-dasharray', 4);
 
+      var thresholdSlider = slid3r()
+        .width(SLIDER_WIDTH)
+        .range([300, 900])
+        .startPos(500)
+        .customTicks([
+          {pos:300, label: "Exact"},
+          {pos:800, label: "Rough"}
+        ])
+        .label('')
+        .loc([
+          props.width-SLIDER_WIDTH-20, 
+          props.height - (props.margin.top+100)]
+        )
+        .handleColor("blue")
+        .font("sans-serif")
+        .onDrag(d => onModeChange(svg,"threshold",d))
+        .onDone(d => onModeChange(svg,"threshold",d));
+
+      var shapeModeSlider = slid3r()
+        .width(SLIDER_WIDTH)
+        .range([0, 1])
+        .startPos(0)
+        .numTicks(0)
+        .clamp(true)
+        .customTicks([
+          {pos:0, label: "No"},
+          {pos:1, label: "Yes"}
+        ])
+        .label('')
+        .loc([
+          props.width-SLIDER_WIDTH-20, 
+          props.height - (props.margin.top+150)]
+        )
+        .handleColor("blue")
+        .font("sans-serif")
+        .onDone(d => onModeChange(svg,"shape",d));
+
+      // Render the abs/relative toggle
+      let shapeModeToggle = svg
+        .selectAll('.tgle.tgle-shape')
+        .data(changed ? [getOffset(svgEl)] : []);
+      shapeModeToggle.exit().remove();
+      shapeModeToggle = shapeModeToggle
+        .enter()    
+        .append('g')
+          .attr("id", "shapeModeToggleBtn")
+          .attr("class", "tgle tgle-shape");
+      shapeModeToggle
+        .append("text")
+          .attr("x", -10)
+          .attr("y", -10)     
+          .style("font-family", "sans-serif")
+          .style("font-size", 10) 
+          .text("Query By Shape");
+        //.merge(absModeToggle)
+      shapeModeToggle
+          .style('position', 'absolute')
+          .call(shapeModeSlider);
+
+      // Render the threshold slider
+      let thresholdToggle = svg
+        .selectAll('.tgle.tgle-threshold')
+        .data(changed ? [getOffset(svgEl)] : []);
+      thresholdToggle.exit().remove();
+      thresholdToggle = thresholdToggle
+        .enter()    
+        .append('g')
+          .attr("id", "thresholdToggleBtn")
+          .attr("class", "tgle tgle-threshold");
+      thresholdToggle
+        .append("text")
+          .attr("x", -10)
+          .attr("y", -10)     
+          .style("font-family", "sans-serif")
+          .style("font-size", 10) 
+          .text("Query Precision");
+        thresholdToggle
+        .merge(thresholdToggle)
+          .style('position', 'absolute')
+          .call(thresholdSlider);          
+
       // Render the save button.
       let saveBtn = d3.select('body')
         .selectAll('.btn.btn-save')
-        .data([getOffset(svgEl)]);
+        .data(changed ?[getOffset(svgEl)]:[]);
       saveBtn.exit().remove();
       saveBtn = saveBtn
         .enter()
@@ -1739,6 +1822,14 @@
       }
     }
 
+    function onModeChange(svg, modeType, value) {
+      const svgEl = svg.node();
+      if (localChanged.get(svgEl)) {
+        setTimeout(() => { renderOverlay(svg); }, 250);
+        dispatch.call('modeChange', svgEl, modeType, value);
+      }
+    }    
+
     function onCurvePress(svg, point) {
       const svgEl = svg.node();
       const points = localPoints.get(svgEl);
@@ -2225,7 +2316,7 @@
     };
 
     /**
-     * If t is sepcified, set the legend title to the given string and return this timeline. Otherwise, return the
+     * If t is specified, set the legend title to the given string and return this timeline. Otherwise, return the
      * current title.
      * @param {string|null|undefined} t The title. If null, the title is set to its default value, which is 'Series'.
      */
