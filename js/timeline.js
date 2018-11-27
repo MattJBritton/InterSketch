@@ -643,6 +643,7 @@
         renderSeries(svg, props, scales, data);
         renderSketch(svg, props, scales, data);
         renderPoints(svg, props, scales, data);
+        renderEvents(svg, props, scales, data);
       });
     }
 
@@ -1006,6 +1007,47 @@
           .attr('stroke-width', 2)
           .attr('fill', d => d.type.fill);
     }
+
+    function renderEvents(svg, props, scales, data) {
+
+      const {
+        x: xScale,
+        y: yScale,
+        key: keyScale,
+      } = scales;
+
+      function getMatchingSeries(event) {
+        return data.series.filter(s=> s.date == event.date)[0];     
+      }
+
+      const container = svg.select('.series-content');
+      
+      var bisect = d3.bisector(d => d.x).left;
+
+      let events = container
+        .selectAll('.event')
+        .data(data.events.filter(e => smallMultiple 
+          || getMatchingSeries(e).match)
+        );
+      events.exit().remove();
+      events = events
+        .enter()
+        .append('circle')
+          .attr('class', 'event')
+        .merge(events)
+          .attr('cx', d => xScale(d.x))
+          .attr('cy', d => 
+            //adapted from https://stackoverflow.com/questions/12431595/how-do-i-return-y-coordinate-of-a-path-in-d3-js
+            yScale(
+              getMatchingSeries(d).curve
+              [bisect(getMatchingSeries(d).curve, d.x)].y
+            )
+          )
+          .attr('r', 6)
+          //.attr('stroke', d => d.type.stroke)
+          .attr('stroke-width', 2)
+          .attr('fill', "black");
+    }    
 
     /**
      * Render the overlay for touch events.

@@ -18,11 +18,7 @@
 
   function load_event_data(events) {
 
-    return d3.nest()
-      .key(d => d.date)
-      .sortValues((a,b) => parseFloat(a.time) - parseFloat(b.time))
-      .entries(
-        events
+    return events
         .filter(d =>
           d.hasOwnProperty('created_at') 
           && d.hasOwnProperty('eventType')
@@ -31,21 +27,14 @@
         .filter(d => Object.keys(eventTypeDict).includes(d.eventType))
         .map(d => ({
             date : moment.parseZone(mergeTimeFormat(d.created_at))
-              .startOf("day")._d,
-            time : extractTimeFromString(d.created_at),
+              .startOf("day")._d.toString(),
+            x : extractTimeFromString(d.created_at),
             eventType : eventTypeDict[d.eventType]
           })
-        )
-      )    
-      .map(group => ({
-          date: group.key,
-          events: group.values.map(
-            d => ({x: d.time, eventType:d.eventType}))
-        })
-      )
+        );
   }
 
-  function load_series_data(series, eventMap) {
+  function load_series_data(series) {
 
     return d3.nest()
       .key(d => d.date)
@@ -68,16 +57,14 @@
       .map(group => ({
           date: group.key,
           curve: interpolate(group.values.map(
-            d => ({x: d.time, y:d.value}))),
-          events: eventMap[group.key]
+            d => ({x: d.time, y:d.value})))
         })
       //only return days that have close to a full 24 hours of data
       ).filter( group => d3.min(group.curve, d=> d.x) <= 1
         && d3.max(group.curve, d=> d.x) >= 23
       ).map(group => ({
           date: group.date,
-          curve: group.curve,
-          events: group.events,
+          curve: group.curve
           //simple_curve: simplify(group.curve, .01, true)
         })
       )      
@@ -163,14 +150,18 @@
     //DTW library needs exact pairs
     Object.values(loaded_data[0].series)
     .filter(outer => 
-      outer.events
-      .filter(inner => 
-        points.length == 0
-        || points.type.value === undefined
-        || (inner.eventType == points.type.value
-          && inner.x >= points[0]-2 //2-hr window
-          && inner.x <= points[0]+2)
-      ).length > 0
+
+      points.filter(p=>
+        loaded_data[0].events
+        .filter(e => e.date == outer.date)
+        .filter(inner =>
+          points.length == 0
+          || (inner.eventType == p.type.value
+            && inner.x >= p[0]-2 //2-hr window
+            && inner.x <= p[0]+2
+          )        
+        ).length > 0
+      ).length == points.length
     )
     .forEach(outer => {
 
@@ -181,14 +172,17 @@
           sketch: mapSketch[roundForDTW(inner.x)]
         }));
 
-      const normalizer = queryByShape?coords[0].curve:0;   
+      if(coords.length > 3) {
 
-      if(getDistance(
-        coords.map(d => d.curve - normalizer),
-        coords.map(d => d.sketch - sketchNormalizer),
-        distanceThreshold)) {
+        const normalizer = queryByShape?coords[0].curve:0;   
 
-        matches.push(outer.date);
+        if(getDistance(
+          coords.map(d => d.curve - normalizer),
+          coords.map(d => d.sketch - sketchNormalizer),
+          distanceThreshold)) {
+
+          matches.push(outer.date);
+        }
       }
     })
 
@@ -205,6 +199,9 @@ function generate_cluster(sketch, points, bolCreateMultiple) {
       loaded_data[0].series.filter(
         d => matches.includes(d.date)
       ), 
+      loaded_data[0].events.filter(
+        d => matches.includes(d.date)
+      ),
       sketch, 
       points,
       true);
@@ -212,7 +209,12 @@ function generate_cluster(sketch, points, bolCreateMultiple) {
     loaded_data[0].series = 
       loaded_data[0].series.filter(
         d => !matches.includes(d.date)
-      )
+      );
+
+    loaded_data[0].events = 
+      loaded_data[0].events.filter(
+        d => !matches.includes(d.date)
+      );
 
     //reload main timeline
     call_timeline(0);
@@ -231,10 +233,11 @@ function generate_cluster(sketch, points, bolCreateMultiple) {
   }  
 }
 
-function add_timeline(series, sketch, points, smallMultiple) {
+function add_timeline(series, events, sketch, points, smallMultiple) {
 
     loaded_data.push({
       series: series,
+      events: events,
       sketch: sketch,
       points: points,
       timeline: build_timeline(smallMultiple),
@@ -301,6 +304,7 @@ function build_timeline(smallMultiple) {
     data.svg
       .datum({
         series: data.series,
+        events: data.events,
         sketch: data.sketch,
         points: data.points
       })
@@ -324,14 +328,21 @@ function build_timeline(smallMultiple) {
   ])
   .then(([events, series]) => {
 
-    var events_grouped = load_event_data(events);
+    var loaded_events = load_event_data(events);
+    var loaded_series = load_series_data(series);
+    dates_with_series = loaded_series.map(s => s.date);
 
-    var eventMap = {};
-    events_grouped.forEach(d => eventMap[d.date] = d.events);
+    loaded_events = loaded_events.filter(
+      e => dates_with_series.includes(e.date.toString())
+    );
 
-    return load_series_data(series, eventMap);
+    return {events: loaded_events,
+      series: loaded_series};
   })    
-  .then(series => {
+  .then(data => {
+
+    let {events, series} = data;
+
     // Calculate the color domain.
     maxDate = getMaxDate(series);
     seriesKeyAccessor = function(s){ 
@@ -339,7 +350,7 @@ function build_timeline(smallMultiple) {
     };    
     seriesDomain = getSeriesDomain(series);
 
-    add_timeline(series, [], [], false);
+    add_timeline(series, events, [], [], false);
 
     // Render the main timeline component.
     call_timeline(0);
