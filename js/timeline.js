@@ -44,8 +44,8 @@
   const POINT_DISTANCE = 40; // Distance between touch and point to consider the point pressed.
   const BOUND_DISTANCE = 20; // Distance between touch and boundary lines to consider the bounds pressed.
   const SLIDER_WIDTH = '8rem'; // Width of query mode slider controls
-  const NUM_HISTOGRAM_BINS = 7; // Number of bins for the bar charts
-
+  const NUM_HISTOGRAM_BINS = 10; // Number of bins for the bar charts
+  const MANUAL_Y_EXTENT = [50,300]; //Don't rely on natural range of the data, as points above 300 are rare
   /**
    * Scale points about another. Assumes points are in order. Modifies the points in place.
    * @param {array<array<number>>} points The points to scale.
@@ -746,7 +746,7 @@
 
     function getScales(data, props) {
       const xExtent = mergeExtent(data.series, seriesDataAccessor, xAccessor, xDomain);
-      const yExtent = mergeExtent(data.series, seriesDataAccessor, yAccessor, yDomain);
+      const yExtent = MANUAL_Y_EXTENT; //mergeExtent(data.series, seriesDataAccessor, yAccessor, yDomain);
       const keys = data.series.map(seriesKeyAccessor);
       const keyType = commonType(keys);
       const keyExtent = seriesDomain[0] === undefined || seriesDomain[1] === undefined
@@ -1148,9 +1148,12 @@
             c.filter(p =>
               p.x >= min && p.x <= max
             )
-          ).map(c => 
+          ).map(c=>
+            c.map(p=> p.y)
+          ).flat(1)
+          /*.map(c => 
             d3.sum(c, p => p.y)/c.length
-          )       
+          )*/
       }
 
       function buildBarChart(segment, offset) {
@@ -1167,9 +1170,7 @@
             .attr("x", props.width-props.margin.right+20+(60*offset))
             .attr("y", d => yScale(d.x1))
             .attr("height", .5*yScale.domain()[1]/NUM_HISTOGRAM_BINS)
-            .attr("width", function(d) { 
-              return barYScale(d.length); 
-            })
+            .attr("width", d => barYScale(d.length))
             .attr('fill', "grey");        
       }
 
@@ -1195,9 +1196,24 @@
         bar_data["after"] = histogram(getSeriesSegment(data.sketch[0][0],
           xScale.domain()[1]));
 
+        console.log(bar_data);
+        console.log(seriesExtent(
+                        Object.values(bar_data),
+                        d=> Object.values(d),
+                        d=> d.length
+                        ));
+        console.log(Object.values(bar_data));
+
+
         //scales
         var barYScale = d3.scaleLinear()
-          .domain([0, data.series.filter(s => s.match).length])
+          .domain(seriesExtent(
+                        Object.values(bar_data),
+                        d=> Object.values(d),
+                        d=> d.length
+                        )
+          )
+          //data.series.filter(s => s.match).length])
           .range([0,50]); 
 
         var barXScale = d3.scaleOrdinal()
