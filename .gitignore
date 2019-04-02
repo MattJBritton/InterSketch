@@ -3,6 +3,10 @@
 # Useful .gitignore templates: https://github.com/github/gitignore
 .DS_Store
 
+OpenHumansData/
+static/temp/
+static/old/
+
 # Editor directories and files
 .idea
 .vscode

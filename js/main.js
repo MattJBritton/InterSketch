@@ -1,7 +1,16 @@
 (function(global, timeline, d3, moment, _) {
-  let startDate = new Date(2017,4,1);
-  let endDate = new Date(2017,6,30);
-  let strictIsoParse = d3.utcParse("%Y-%m-%dT%H:%M:%S.%L%Z");
+  let startDate = new Date(2017,1,1);
+  let endDate = new Date(2017,3,30);
+  timeFormats = [
+    d3.utcParse("%Y-%m-%dT%H:%M:%S.%L%Z"),
+    d3.utcParse("%Y-%m-%d %H:%M:%S.%L%Z"),
+    d3.utcParse("%Y-%m-%dT%H:%M:%S%Z"),
+    d3.utcParse("%Y-%m-%d %H:%M:%S%Z"),
+    d3.utcParse("%Y-%m-%dT%H:%M%Z"),
+    d3.utcParse("%Y-%m-%d %H:%M%Z"),
+    d3.utcParse("%a %b %d %H:%M:%S CDT %Y")
+    //"Tue Oct 27 19:27:29 CDT 2015"
+  ];
   let div = d3.select("#timeline");
   let loaded_data = [];
   let seriesDomain = [0, 1];
@@ -21,7 +30,8 @@
           d.hasOwnProperty('created_at') 
           && d.hasOwnProperty('eventType')
           && parseTime(d.created_at) >= startDate.getTime()
-          && parseTime(d.created_at) <= endDate.getTime())
+          && parseTime(d.created_at) <= endDate.getTime()
+          )
         .filter(d => Object.keys(eventTypeDict).includes(d.eventType))
         .map(d => ({
             date : moment.parseZone(mergeTimeFormat(d.created_at))
@@ -43,7 +53,8 @@
           d.hasOwnProperty('dateString') 
           && d.hasOwnProperty('sgv')
           && parseTime(d.dateString) >= startDate.getTime()
-          && parseTime(d.dateString) <= endDate.getTime())
+          && parseTime(d.dateString) <= endDate.getTime()
+          )
         .map(d => ({
             date : moment.parseZone(mergeTimeFormat(d.dateString))
               .startOf("day")._d,
@@ -62,7 +73,7 @@
         && d3.max(group.curve, d=> d.x) >= 23
       ).map(group => ({
           date: group.date,
-          curve: group.curve
+          curve: simplify(group.curve, .05, true)
           //simple_curve: simplify(group.curve, .01, true)
         })
       )      
@@ -70,7 +81,23 @@
 
   function parseTime(dateString) {
 
-    return strictIsoParse(mergeTimeFormat(dateString)).getTime();
+    for(let tf of timeFormats) {
+
+      if(tf(dateString) != null) {
+        return tf(dateString).getTime();
+      }    
+    }
+
+    console.log(dateString);
+    return null;
+    /*
+    if(strictIsoParseNoSubSeconds(dateString) == null) {
+
+      return strictIsoParseWithSubSeconds(dateString).getTime();
+    } else {
+      return strictIsoParseNoSubSeconds(dateString).getTime();
+    }
+    */
   }
 
   function mergeTimeFormat(dateString) {
@@ -326,8 +353,12 @@ function build_timeline(smallMultiple) {
   ])
   .then(([events, series]) => {
 
+    //console.log(events);
+    //console.log(series);
+
     var loaded_events = load_event_data(events);
     var loaded_series = load_series_data(series);
+
     dates_with_series = loaded_series.map(s => s.date);
 
     loaded_events = loaded_events.filter(
@@ -340,6 +371,9 @@ function build_timeline(smallMultiple) {
   .then(data => {
 
     let {events, series} = data;
+
+    console.log(events);
+    console.log(series);
 
     // Calculate the color domain.
     maxDate = getMaxDate(series);
