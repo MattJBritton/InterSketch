@@ -1,4 +1,4 @@
-# timesketch
+# InterSketch
 > A sketch-based visual analytics tool for querying time series data.
 
 ## Getting Started
@@ -9,20 +9,13 @@ You need [git][git] to clone the repository.
 
 You need a web server to run the application in development. [Python][python] has a simple web server.
 
-### Clone Timesketch
+### Clone InterSketch
 
-Clone the timesketch repository using git:
+Clone the InterSketch repository using git:
 
 ```bash
-git clone https://github.gatech.edu/tmajor3/timesketch.git
+git clone https://github.com/MattJBritton/InterSketch.git
 cd timesketch
-```
-
-If you want to call it something different on your local machine:
-
-```bash
-git clone https://github.gatech.edu/tmajor3/timesketch.git <your-project-name>
-cd <your-project-name>
 ```
 
 ### Start the Web Server
@@ -50,21 +43,3 @@ python -m http.server <port>
 ## Managing Dependencies
 
 No special mechanism is used for dependencies; global scripts are being used. See `index.html` for an example of how to load a third party script from a CDN with a local fallback. Local copies of the scripts should be placed in `js/vendor/`.
-
-### Scoping Using IIFEs
-
-**I**mmediately **I**nvoked **F**unction **E**xpressions are used to scope the JavaScript code within a script file. This creates a closure in which functions, variables, etc. within the file will remain insulated from the global namespace unless deliberately exported to the `window` object. In addition, IIFEs can inject dependencies. For example, `js/timeline.js` injects `window`, `d3`, and `lodash` into the closure and then exports the `timeline` object:
-
-```JavaScript
-(function(global, d3, _) { // Create a function with the window, d3, and lodash injected as 'global', 'd3', and '_', respectively.
-...
-global.timeline = function() { // Export the timeline component.
-...
-})(window, window.d3, window._); // Immediately invoke the function, injecting from the global scope.
-```
-
-For more information on IIFEs, check out this [Medium post](https://medium.com/@vvkchandra/essential-javascript-mastering-immediately-invoked-function-expressions-67791338ddc6).
-
-[git]: https://git-scm.com/
-[python]: https://www.python.org/
-[server]: http://localhost:8000
